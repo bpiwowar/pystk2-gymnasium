@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "pystk2-gymnasium"
+version = "0.1.0"
+description = "Gymnasium wrapper for PySTK2"
+authors = ["Benjamin Piwowarski <benjamin@piwowarski.fr>"]
+license = "GPL"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
