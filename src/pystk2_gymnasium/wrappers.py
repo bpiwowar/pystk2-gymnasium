@@ -52,6 +52,7 @@ class ActionFlattenerWrapper(gym.ActionWrapper, SpaceFlattener):
         self.action_space = self.flatten_space(env.action_space)
 
     def action(self, action):
+        assert len(self.discrete_keys) == len(action["discrete"]), f"""Not enough discrete values: expected {len(self.discrete_keys)}, got {len(action["discrete"])}"""
         discrete = {key: key_action for key, key_action in zip(self.discrete_keys, action["discrete"]) }
         continuous = {key: action["continuous"][self.indices[ix]:self.indices[ix+1]].reshape(shape) for ix, (key, shape) in enumerate(zip(self.continuous_keys, self.shapes)) }
         return {**discrete, **continuous}
