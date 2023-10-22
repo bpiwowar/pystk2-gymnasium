@@ -6,9 +6,12 @@ authors = ["Benjamin Piwowarski <benjamin@piwowarski.fr>"]
 license = "GPL"
 readme = "README.md"
 
+homepage = "https://github.com/bpiwowar/pystk2-gymnasium"
+repository = "https://github.com/bpiwowar/pystk2-gymnasium"
+
 [tool.poetry.dependencies]
 python = "^3.8"
-
+PySuperTuxKart = "=0.3.0"
 
 [build-system]
 requires = ["poetry-core"]
