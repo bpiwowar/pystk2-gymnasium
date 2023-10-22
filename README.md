@@ -1,0 +1,1 @@
+# PySuperTuxKart gymnasium wrapper
