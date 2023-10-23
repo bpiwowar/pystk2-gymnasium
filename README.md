@@ -26,9 +26,11 @@ After importing `pystk2_gymnasium`, the following environments are available:
     - `max_paths` the maximum number of the (nearest) paths (a track is made of paths) to consider in the observation state
     - `laps` is the number of laps (1 by default)
     - `difficulty` is the difficulty of the other bots (0 to 2, default to 2)
-- `supertuxkart-simple-v0` is a simplified environment with fixed number observations for paths (controlled by `state_paths`, default 5), items (`state_items`, default 5), karts (`state_karts`, default 5)
+- `supertuxkart-simple-v0` is a simplified environment with fixed number of observations for paths (controlled by `state_paths`, default 5), items (`state_items`, default 5), karts (`state_karts`, default 5)
 - `supertuxkart-flattened-v0` has observation and action spaces simplified at the maximum (only `discrete` and `continuous` keys)
 - `supertuxkart-flattened-discrete-v0` is like the previous one, but with fully discretized actions
+
+The reward is the distance traveled. 
 
 ## Example
 
