@@ -59,8 +59,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             with_graphics == STKRaceEnv.INITIALIZED
         ), "Cannot switch from graphics to not graphics mode"
 
-        STKRaceEnv.TRACKS = pystk2.list_tracks(pystk2.RaceConfig.RaceMode.NORMAL_RACE) 
-                            
+        STKRaceEnv.TRACKS = pystk2.list_tracks(pystk2.RaceConfig.RaceMode.NORMAL_RACE)
 
     def __init__(
         self,
@@ -70,7 +69,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         rank_start=None,
         use_ai=False,
         max_paths=None,
-        laps: int=1,
+        laps: int = 1,
         difficulty: int = 2,
     ):
         """Creates a new race
@@ -126,25 +125,51 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 "rescue": spaces.Discrete(2),
             }
         )
-        
-        self.observation_space = spaces.Dict({
-            "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
-            # Last attachment... is no attachment
-            "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
-            "attachment_time_left": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
-            "shield_time": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
-            "velocity": spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,)),
-            "distance_down_track": spaces.Box(0.0, float("inf")),
-            "front": spaces.Box(-float("inf"), float("inf"), dtype=np.float32, shape=(3,)),
-            "jumping": spaces.Discrete(2),
-            "items_position": spaces.Sequence(spaces.Box(-float("inf"), float("inf"), dtype=np.float32, shape=(3,))),
-            "items_type": spaces.Discrete(max_enum_value(pystk2.Item)),             
-            "karts_position": spaces.Sequence(spaces.Box(-float("inf"), float("inf"), dtype=np.float32, shape=(3,))),
-            "paths_distance": spaces.Sequence(spaces.Box(0, float("inf"), dtype=np.float32, shape=(2,))),
-            "paths_width": spaces.Sequence(spaces.Box(0, float("inf"), dtype=np.float32, shape=(1,))),
-            "paths_start": spaces.Sequence(spaces.Box(0, float("inf"), dtype=np.float32, shape=(3,))),
-            "paths_end": spaces.Sequence(spaces.Box(0, float("inf"), dtype=np.float32, shape=(3,)))
-        })
+
+        self.observation_space = spaces.Dict(
+            {
+                "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
+                # Last attachment... is no attachment
+                "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
+                "attachment_time_left": spaces.Box(
+                    0.0, float("inf"), dtype=np.float32, shape=(1,)
+                ),
+                "shield_time": spaces.Box(
+                    0.0, float("inf"), dtype=np.float32, shape=(1,)
+                ),
+                "velocity": spaces.Box(
+                    float("-inf"), float("inf"), dtype=np.float32, shape=(3,)
+                ),
+                "distance_down_track": spaces.Box(0.0, float("inf")),
+                "front": spaces.Box(
+                    -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
+                ),
+                "jumping": spaces.Discrete(2),
+                "items_position": spaces.Sequence(
+                    spaces.Box(
+                        -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
+                    )
+                ),
+                "items_type": spaces.Discrete(max_enum_value(pystk2.Item)),
+                "karts_position": spaces.Sequence(
+                    spaces.Box(
+                        -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
+                    )
+                ),
+                "paths_distance": spaces.Sequence(
+                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(2,))
+                ),
+                "paths_width": spaces.Sequence(
+                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(1,))
+                ),
+                "paths_start": spaces.Sequence(
+                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(3,))
+                ),
+                "paths_end": spaces.Sequence(
+                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(3,))
+                ),
+            }
+        )
 
     def reset(
         self,
@@ -164,8 +189,11 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             self.current_track = self.TRACKS[random.randint(0, len(self.TRACKS))]
             logging.info("Selected %s", self.current_track)
         self.config = pystk2.RaceConfig(
-            num_kart=self.num_kart, seed=seed or 0, difficulty=self.difficulty,
-            track=self.current_track, laps=self.laps
+            num_kart=self.num_kart,
+            seed=seed or 0,
+            difficulty=self.difficulty,
+            track=self.current_track,
+            laps=self.laps,
         )
 
         for ix in range(self.num_kart):
@@ -199,7 +227,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             self.world.update()
             if self.world.phase == pystk2.WorldState.Phase.GO_PHASE:
                 break
-            
+
         return self.observation(), {}
 
     def step(
@@ -208,14 +236,16 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         if self.use_ai:
             self.race.step()
         else:
-            
-            self.race.step(pystk2.Action(
-                brake=action["brake"] > 0,
-                nitro=action["nitro"] > 0,
-                drift=action["drift"] > 0,
-                rescue=action["rescue"] > 0,
-                fire=action["fire"] > 0
-            ))
+
+            self.race.step(
+                pystk2.Action(
+                    brake=action["brake"] > 0,
+                    nitro=action["nitro"] > 0,
+                    drift=action["drift"] > 0,
+                    rescue=action["rescue"] > 0,
+                    fire=action["fire"] > 0,
+                )
+            )
 
         # And output it
         reward = 0
@@ -247,7 +277,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 size = min(len(list), self.max_paths)
             else:
                 size = len(list)
-                
+
             ix = start
             for _ in range(size):
                 yield list[ix]
@@ -255,30 +285,67 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 if ix >= size:
                     ix = 0
 
+        def list_permute(list, sort_ix):
+            list[:] = (list[ix] for ix in sort_ix)
+
+        # Sort closest to front
+        x_front = kartview(kart.front)
+
+        def sort_closest(positions, *lists):
+            distances = [(p - x_front) @ x_front for p in positions]
+
+            # Change distances: if d < 0, d <- -d+max_d+1
+            # so that negative distances are after
+            max_d = max(distances)
+            distances_2 = [d if d >= 0 else -d + max_d + 1 for d in distances]
+
+            sorted_ix = np.argsort(distances_2)
+
+            list_permute(positions, sorted_ix)
+            for list in lists:
+                list_permute(list, sorted_ix)
+
+        # Sort items and karts by decreasing
+        karts_position = [
+            kartview(other_kart.location)
+            for ix, other_kart in enumerate(self.world.karts)
+            if ix != self.kart_ix
+        ]
+        sort_closest(karts_position)
+
+        items_position = [kartview(item.location) for item in self.world.items]
+        items_type = [item.type.value for item in self.world.items]
+        sort_closest(items_position, items_type)
+
         return {
             # Kart properties
             "powerup": kart.powerup.num,
             "attachment": kart.attachment.type.value,
-            "attachment_time_left": np.array([kart.attachment.time_left], dtype=np.float32),
+            "attachment_time_left": np.array(
+                [kart.attachment.time_left], dtype=np.float32
+            ),
             "shield_time": np.array([kart.shield_time], dtype=np.float32),
             "jumping": 1 if kart.jumping else 0,
             # Kart physics (from the kart point view)
-            "distance_down_track": np.array([kart.distance_down_track], dtype=np.float32),
+            "distance_down_track": np.array(
+                [kart.distance_down_track], dtype=np.float32
+            ),
             "velocity": kart.velocity_lc,
             "front": kartview(kart.front),
             # Items (kart point of view)
-            "items_position": [kartview(item.location) for item in self.world.items],
-            "items_type": [item.type.value for item in self.world.items],
+            "items_position": items_position,
+            "items_type": items_type,
             # Other karts (kart point of view)
-            "karts_position": [kartview(other_kart.location)
-                    for ix, other_kart in enumerate(self.world.karts)
-                    if ix != self.kart_ix
-            ],
+            "karts_position": karts_position,
             # Paths
             "paths_distance": list(iterate_from(self.track.path_distance, path_ix)),
             "paths_width": list(iterate_from(self.track.path_width, path_ix)),
-            "paths_start": list(x[0] for x in iterate_from(self.track.path_nodes, path_ix)),
-            "paths_end": list(x[1] for x in iterate_from(self.track.path_nodes, path_ix))
+            "paths_start": list(
+                x[0] for x in iterate_from(self.track.path_nodes, path_ix)
+            ),
+            "paths_end": list(
+                x[1] for x in iterate_from(self.track.path_nodes, path_ix)
+            ),
         }
 
 
@@ -291,29 +358,44 @@ class SimpleSTKRaceEnv(STKRaceEnv):
         """
         super().__init__(max_paths=state_paths, **kwargs)
         self.state_items = state_items
-        self.state_karts = state_karts 
-        self.state_paths = state_paths               
-                
+        self.state_karts = state_karts
+        self.state_paths = state_paths
+
         # Override some keys in the observation space
         space = self.observation_space
 
-        space["paths_distance"] =  spaces.Box(0, float("inf"), shape=(self.state_paths, 2), dtype=np.float32)
-        space["paths_width"] =  spaces.Box(0, float("inf"), shape=(self.state_paths, 1), dtype=np.float32)
-        space["paths_start"] =  spaces.Box(-float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32)
-        space["paths_end"] =  spaces.Box(-float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32)
+        space["paths_distance"] = spaces.Box(
+            0, float("inf"), shape=(self.state_paths, 2), dtype=np.float32
+        )
+        space["paths_width"] = spaces.Box(
+            0, float("inf"), shape=(self.state_paths, 1), dtype=np.float32
+        )
+        space["paths_start"] = spaces.Box(
+            -float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32
+        )
+        space["paths_end"] = spaces.Box(
+            -float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32
+        )
 
-        space["items_position"] = spaces.Box(-float("inf"), float("inf"), shape=(self.state_items, 3), dtype=np.float32)
-        space["items_type"] = spaces.Box(0, max_enum_value(pystk2.Item), dtype=np.int64, shape=(self.state_items, ))       
-        space["karts_position"] = spaces.Box(-float("inf"), float("inf"), shape=(self.state_karts, 3))
+        space["items_position"] = spaces.Box(
+            -float("inf"), float("inf"), shape=(self.state_items, 3), dtype=np.float32
+        )
+        space["items_type"] = spaces.Box(
+            0, max_enum_value(pystk2.Item), dtype=np.int64, shape=(self.state_items,)
+        )
+        space["karts_position"] = spaces.Box(
+            -float("inf"), float("inf"), shape=(self.state_karts, 3)
+        )
 
-
-    def make_tensor(self, state, name: str):        
+    def make_tensor(self, state, name: str):
         value = state[name]
         space = self.observation_space[name]
-        
+
         value = np.stack(value)
-        assert space.shape[1:] == value.shape[1:], f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
-        
+        assert (
+            space.shape[1:] == value.shape[1:]
+        ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+
         delta = space.shape[0] - value.shape[0]
         if delta > 0:
             shape = [delta] + list(space.shape[1:])
@@ -321,12 +403,14 @@ class SimpleSTKRaceEnv(STKRaceEnv):
         elif delta < 0:
             value = value[:delta]
 
-        assert space.shape == value.shape, f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+        assert (
+            space.shape == value.shape
+        ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
         state[name] = value
 
     def observation(self):
         state = super().observation()
-        
+
         # Ensures that the size of observations is constant
         self.make_tensor(state, "paths_distance")
         self.make_tensor(state, "paths_width")
@@ -335,8 +419,5 @@ class SimpleSTKRaceEnv(STKRaceEnv):
         self.make_tensor(state, "items_position")
         self.make_tensor(state, "items_type")
         self.make_tensor(state, "karts_position")
-        
+
         return state
-    
-class FlattenedSTKRaceEnv(STKRaceEnv):
-    pass
