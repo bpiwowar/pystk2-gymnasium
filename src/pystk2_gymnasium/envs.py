@@ -239,7 +239,6 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         if self.use_ai:
             self.race.step()
         else:
-
             self.race.step(
                 pystk2.Action(
                     brake=action["brake"] > 0,
@@ -250,10 +249,11 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 )
             )
 
-        # And output it
-        reward = 0
-        terminated = self.world.karts[0].finish_time > 0
+        kart = self.world.karts[self.kart_ix]
+        distance = kart.overall_distance
+        terminated = kart.finish_time > 0
         obs = self.observation()
+        reward = kart.overall_distance - distance
 
         # --- Find the track
         return obs, reward, terminated, False, {}
@@ -444,11 +444,7 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
     def step(
         self, action: STKDiscreteAction
     ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        action["acceleration"] = (
-            action["acceleration"].float() / self.acceleration_steps
-        )
+        action["acceleration"] = action["acceleration"] / self.acceleration_steps
         max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
-        action["steering"] = (
-            action["steering"].float() / self.steering_steps * max_steer_angle
-        )
+        action["steering"] = action["steering"] / self.steering_steps * max_steer_angle
         return super().step(action)
