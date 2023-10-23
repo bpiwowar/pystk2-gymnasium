@@ -10,6 +10,9 @@ except ImportError:
             # Just ignores
             pass
 
+        def __call__(self, method):
+            return method
+
 
 @jit(nopython=True)
 def rotate(v: np.array, q: np.array):

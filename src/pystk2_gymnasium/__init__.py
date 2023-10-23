@@ -17,7 +17,26 @@ register(
     entry_point="pystk2_gymnasium.envs:SimpleSTKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
-        WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:ObsFlattenerWrapper", {}), 
-        WrapperSpec("action-flattener", "pystk2_gymnasium.wrappers:ActionFlattenerWrapper", {}), 
-    )
+        WrapperSpec(
+            "obs-flattener", "pystk2_gymnasium.wrappers:ObsFlattenerWrapper", {}
+        ),
+        WrapperSpec(
+            "action-flattener", "pystk2_gymnasium.wrappers:ActionFlattenerWrapper", {}
+        ),
+    ),
+)
+
+# Discrete actions
+register(
+    id="supertuxkart-flattened-discrete-v0",
+    entry_point="pystk2_gymnasium.envs:DiscreteActionSTKRaceEnv",
+    max_episode_steps=1500,
+    additional_wrappers=(
+        WrapperSpec(
+            "obs-flattener", "pystk2_gymnasium.wrappers:ObsFlattenerWrapper", {}
+        ),
+        WrapperSpec(
+            "action-flattener", "pystk2_gymnasium.wrappers:ActionFlattenerWrapper", {}
+        ),
+    ),
 )

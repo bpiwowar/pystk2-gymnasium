@@ -131,6 +131,9 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
                 # Last attachment... is no attachment
                 "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
+                "skeed_factor": spaces.Box(
+                    0.0, float("inf"), dtype=np.float32, shape=(1,)
+                ),
                 "attachment_time_left": spaces.Box(
                     0.0, float("inf"), dtype=np.float32, shape=(1,)
                 ),
@@ -324,6 +327,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             "attachment_time_left": np.array(
                 [kart.attachment.time_left], dtype=np.float32
             ),
+            "skeed_factor": np.array([kart.skeed_factor], dtype=np.float32),
             "shield_time": np.array([kart.shield_time], dtype=np.float32),
             "jumping": 1 if kart.jumping else 0,
             # Kart physics (from the kart point view)
@@ -350,7 +354,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
 
 
 class SimpleSTKRaceEnv(STKRaceEnv):
-    def __init__(self, state_items=5, state_karts=5, state_paths=5, **kwargs):
+    def __init__(self, *, state_items=5, state_karts=5, state_paths=5, **kwargs):
         """A simpler race environment with fixed width data
 
         :param state_items: The number of items, defaults to 5
@@ -376,7 +380,6 @@ class SimpleSTKRaceEnv(STKRaceEnv):
         space["paths_end"] = spaces.Box(
             -float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32
         )
-
         space["items_position"] = spaces.Box(
             -float("inf"), float("inf"), shape=(self.state_items, 3), dtype=np.float32
         )
@@ -421,3 +424,31 @@ class SimpleSTKRaceEnv(STKRaceEnv):
         self.make_tensor(state, "karts_position")
 
         return state
+
+
+class STKDiscreteAction(STKAction):
+    acceleration: int
+    steering: int
+
+
+class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
+    # Wraps the actions
+    def __init__(self, acceleration_steps=10, steering_steps=10, **kwargs):
+        super().__init__(**kwargs)
+        self.acceleration_steps = acceleration_steps
+        self.steering_steps = steering_steps
+
+        self.action_space["acceleration"] = spaces.Discrete(acceleration_steps)
+        self.action_space["steering"] = spaces.Discrete(steering_steps)
+
+    def step(
+        self, action: STKDiscreteAction
+    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+        action["acceleration"] = (
+            action["acceleration"].float() / self.acceleration_steps
+        )
+        max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
+        action["steering"] = (
+            action["steering"].float() / self.steering_steps * max_steer_angle
+        )
+        return super().step(action)
