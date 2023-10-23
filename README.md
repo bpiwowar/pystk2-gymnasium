@@ -1,5 +1,7 @@
 # PySuperTuxKart gymnasium wrapper
 
+*warning*: pystk2-gymnasium is in alpha stage - the environments might change abruptly!
+
 ## Environments
 
 After importing `pystk2_gymnasium`, the following environments are available:
