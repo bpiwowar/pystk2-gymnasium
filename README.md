@@ -2,12 +2,20 @@
 
 *warning*: pystk2-gymnasium is in alpha stage - the environments might change abruptly!
 
+## Install
+
+The PySuperKart2 gymnasium wrapper is a Python package, so installing is fairly easy
+
+`pip install pystk2-gymnasium`
+
+Note that during the first run, SuperTuxKart assets are downloaded in the cache directory.
+
 ## Environments
 
 After importing `pystk2_gymnasium`, the following environments are available:
 
 - `supertuxkart-v0` is the main environment containing complete observations
-- `supertuxkart-simple-v0` is a simplified environment with fixed size observations
+- `supertuxkart-simple-v0` is a simplified environment with fixed-size observations
 - `supertuxkart-flattened-v0` has observation and action spaces simplified at the maximum (only `discrete` and `continuous` keys)
 - `supertuxkart-flattened-discrete-v0` is like the previous one, but with fully discretized actions
 
