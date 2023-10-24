@@ -8,7 +8,7 @@ After importing `pystk2_gymnasium`, the following environments are available:
 
 - `supertuxkart-v0` is the main environment containing complete observations
 - `supertuxkart-simple-v0` is a simplified environment with fixed size observations
-- `supertuxkart-flattened-v0` has observation and action spaces simplified at the maximum (only `discrete` and `continuous` keys)
+- `supertuxkart-flattened-v0` has observation and action spaces simplified at the maximum (only `obs_discrete` and `obs_continuous` keys)
 - `supertuxkart-flattened-discrete-v0` is like the previous one, but with fully discretized actions
 
 ## Example

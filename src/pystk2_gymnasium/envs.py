@@ -112,7 +112,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 # Acceleration
                 "acceleration": spaces.Box(0, 1, shape=(1,)),
                 # Steering angle
-                "steering": spaces.Box(-1, 1, shape=(1,)),
+                "steer": spaces.Box(-1, 1, shape=(1,)),
                 # Brake
                 "brake": spaces.Discrete(2),
                 # Drift
@@ -173,6 +173,9 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 ),
             }
         )
+
+        if self.use_ai:
+            self.observation_space["action"] = self.action_space
 
     def reset(
         self,
@@ -246,6 +249,8 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                     drift=action["drift"] > 0,
                     rescue=action["rescue"] > 0,
                     fire=action["fire"] > 0,
+                    steering=action["steer"],
+                    acceleration=action["acceleration"],
                 )
             )
 
@@ -320,7 +325,23 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         items_type = [item.type.value for item in self.world.items]
         sort_closest(items_position, items_type)
 
+        # Add action if using AI bot
+        obs = {}
+        if self.use_ai:
+            action = self.race.get_kart_action(self.kart_ix)
+            obs = {
+                "action": {
+                    "steer": action.steer,
+                    "brake": action.brake,
+                    "nitro": action.nitro,
+                    "drift": action.drift,
+                    "rescue": action.rescue,
+                    "fire": action.fire,
+                    "acceleration": action.acceleration,
+                }
+            }
         return {
+            **obs,
             # Kart properties
             "powerup": kart.powerup.num,
             "attachment": kart.attachment.type.value,
@@ -439,12 +460,27 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
         self.steering_steps = steering_steps
 
         self.action_space["acceleration"] = spaces.Discrete(acceleration_steps)
-        self.action_space["steering"] = spaces.Discrete(steering_steps)
+        self.action_space["steer"] = spaces.Discrete(steering_steps)
+
+    def from_discrete(self, action):
+        action = {**action}
+        action["acceleration"] = action["acceleration"] / self.acceleration_steps
+        max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
+        action["steer"] = action["steer"] / self.steering_steps * max_steer_angle
+        return action
+
+    def to_discrete(self, action):
+        action = {**action}
+        action["acceleration"] = np.array(
+            [int(action["acceleration"] * self.acceleration_steps)]
+        )
+        max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
+        action["steer"] = np.array(
+            [int(action["steer"] * self.steering_steps / max_steer_angle)]
+        )
+        return action
 
     def step(
         self, action: STKDiscreteAction
     ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        action["acceleration"] = action["acceleration"] / self.acceleration_steps
-        max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
-        action["steering"] = action["steering"] / self.steering_steps * max_steer_angle
-        return super().step(action)
+        return super().step(self.from_discrete(action))
