@@ -340,6 +340,9 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                     "acceleration": action.acceleration,
                 }
             }
+            if isinstance(self, DiscreteActionSTKRaceEnv):
+                obs["action"] = self.to_discrete(obs["action"])
+
         return {
             **obs,
             # Kart properties
@@ -452,32 +455,54 @@ class STKDiscreteAction(STKAction):
     steering: int
 
 
+class Discretizer:
+    def __init__(self, space: spaces.Box, values: int):
+        self.max_value = float(space.high)
+        self.min_value = float(space.low)
+        self.values = values
+        self.space = spaces.Discrete(values)
+
+    def discretize(self, value: float):
+        v = int(
+            (value - self.min_value)
+            * (self.values - 1)
+            / (self.max_value - self.min_value)
+        )
+        if v >= self.values:
+            return v - 1
+        return v
+
+    def continuous(self, value: int):
+        return (self.max_value - self.min_value) * value / (
+            self.values - 1
+        ) + self.min_value
+
+
 class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
     # Wraps the actions
-    def __init__(self, acceleration_steps=10, steering_steps=10, **kwargs):
+    def __init__(self, acceleration_steps=10, steer_steps=10, **kwargs):
         super().__init__(**kwargs)
-        self.acceleration_steps = acceleration_steps
-        self.steering_steps = steering_steps
 
-        self.action_space["acceleration"] = spaces.Discrete(acceleration_steps)
-        self.action_space["steer"] = spaces.Discrete(steering_steps)
+        self.d_acceleration = Discretizer(
+            self.action_space["acceleration"], acceleration_steps
+        )
+        self.action_space["acceleration"] = self.d_acceleration.space
+
+        self.d_steer = Discretizer(self.action_space["steer"], steer_steps)
+        self.action_space["steer"] = self.d_steer.space
 
     def from_discrete(self, action):
         action = {**action}
-        action["acceleration"] = action["acceleration"] / self.acceleration_steps
+        action["acceleration"] = self.d_acceleration.continuous(action["acceleration"])
         max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
-        action["steer"] = action["steer"] / self.steering_steps * max_steer_angle
+        action["steer"] = self.d_steer.continuous(action["steer"]) * max_steer_angle
         return action
 
     def to_discrete(self, action):
         action = {**action}
-        action["acceleration"] = np.array(
-            [int(action["acceleration"] * self.acceleration_steps)]
-        )
+        action["acceleration"] = self.d_acceleration.discretize(action["acceleration"])
         max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
-        action["steer"] = np.array(
-            [int(action["steer"] * self.steering_steps / max_steer_angle)]
-        )
+        action["steer"] = self.d_steer.discretize(action["steer"] / max_steer_angle)
         return action
 
     def step(
