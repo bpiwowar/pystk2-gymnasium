@@ -244,13 +244,13 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         else:
             self.race.step(
                 pystk2.Action(
-                    brake=action["brake"] > 0,
-                    nitro=action["nitro"] > 0,
-                    drift=action["drift"] > 0,
-                    rescue=action["rescue"] > 0,
-                    fire=action["fire"] > 0,
-                    steering=action["steer"],
-                    acceleration=action["acceleration"],
+                    brake=int(action["brake"]) > 0,
+                    nitro=int(action["nitro"] > 0),
+                    drift=int(action["drift"] > 0),
+                    rescue=int(action["rescue"] > 0),
+                    fire=int(action["fire"] > 0),
+                    steer=float(action["steer"]),
+                    acceleration=float(action["acceleration"]),
                 )
             )
 
