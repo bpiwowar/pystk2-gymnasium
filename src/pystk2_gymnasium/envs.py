@@ -468,8 +468,10 @@ class Discretizer:
             * (self.values - 1)
             / (self.max_value - self.min_value)
         )
+        assert v >= 0, f"discretized value {v} is below 0"
         if v >= self.values:
-            return v - 1
+            v -= 1
+        assert v <= self.values, f"discretized value {v} is above {self.values-1}"
         return v
 
     def continuous(self, value: int):
@@ -494,15 +496,13 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
     def from_discrete(self, action):
         action = {**action}
         action["acceleration"] = self.d_acceleration.continuous(action["acceleration"])
-        max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
-        action["steer"] = self.d_steer.continuous(action["steer"]) * max_steer_angle
+        action["steer"] = self.d_steer.continuous(action["steer"])
         return action
 
     def to_discrete(self, action):
         action = {**action}
         action["acceleration"] = self.d_acceleration.discretize(action["acceleration"])
-        max_steer_angle = self.world.karts[self.kart_ix].max_steer_angle
-        action["steer"] = self.d_steer.discretize(action["steer"] / max_steer_angle)
+        action["steer"] = self.d_steer.discretize(action["steer"])
         return action
 
     def step(
