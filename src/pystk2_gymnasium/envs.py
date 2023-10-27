@@ -181,7 +181,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         self,
         *,
         seed: Optional[int] = None,
-        options: Optional[dict[str, Any]] = None,
+        options: Optional[Dict[str, Any]] = None,
     ) -> tuple[pystk2.WorldState, dict[str, Any]]:
         if self.race:
             del self.race
@@ -244,7 +244,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
 
     def step(
         self, action: STKAction
-    ) -> tuple[pystk2.WorldState, float, bool, bool, dict[str, Any]]:
+    ) -> tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
         if self.use_ai:
             self.race.step()
         else:
