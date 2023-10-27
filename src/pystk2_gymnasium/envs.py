@@ -482,7 +482,7 @@ class Discretizer:
 
 class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
     # Wraps the actions
-    def __init__(self, acceleration_steps=10, steer_steps=10, **kwargs):
+    def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
         super().__init__(**kwargs)
 
         self.d_acceleration = Discretizer(
