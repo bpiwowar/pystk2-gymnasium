@@ -182,7 +182,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         *,
         seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
-    ) -> tuple[pystk2.WorldState, dict[str, Any]]:
+    ) -> tuple[pystk2.WorldState, Dict[str, Any]]:
         if self.race:
             del self.race
 
@@ -513,7 +513,7 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
 
     def step(
         self, action: STKDiscreteAction
-    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+    ) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
         return super().step(self.from_discrete(action))
 
 class OnlyContinuousActionSTKRaceEnv(SimpleSTKRaceEnv):
@@ -535,7 +535,7 @@ class OnlyContinuousActionSTKRaceEnv(SimpleSTKRaceEnv):
 
     def step(
         self, action: Dict
-    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+    ) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
         return super().step({
             **action,
             **{key: 0 for key, value in self.discrete_actions.items()}
