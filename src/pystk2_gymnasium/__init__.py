@@ -23,10 +23,20 @@ register(
 
 # Discrete actions
 register(
+    id="supertuxkart-flattened-multidiscrete-v0",
+    entry_point="pystk2_gymnasium.envs:DiscreteActionSTKRaceEnv",
+    max_episode_steps=1500,
+    additional_wrappers=(
+        WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
+    ),
+)
+
+register(
     id="supertuxkart-flattened-discrete-v0",
     entry_point="pystk2_gymnasium.envs:DiscreteActionSTKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
         WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
+        WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenMultiDiscreteActions", {}),
     ),
 )
