@@ -12,6 +12,8 @@ register(
     max_episode_steps=1500,
 )
 
+# Flattens the spaces: join continuous actions, transform discrete into multidiscrete
+# so that there are only two keys describing the environment
 register(
     id="supertuxkart-flattened-v0",
     entry_point="pystk2_gymnasium.envs:SimpleSTKRaceEnv",
@@ -21,7 +23,17 @@ register(
     ),
 )
 
-# Discrete actions
+# No discrete action (just steer/acceleration)
+register(
+    id="supertuxkart-flattened-continuous-actions-v0",
+    entry_point="pystk2_gymnasium.envs:OnlyContinuousActionSTKRaceEnv",
+    max_episode_steps=1500,
+    additional_wrappers=(
+        WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
+    ),
+)
+
+# Multi-Discrete actions
 register(
     id="supertuxkart-flattened-multidiscrete-v0",
     entry_point="pystk2_gymnasium.envs:DiscreteActionSTKRaceEnv",
@@ -31,6 +43,7 @@ register(
     ),
 )
 
+# Discrete actions
 register(
     id="supertuxkart-flattened-discrete-v0",
     entry_point="pystk2_gymnasium.envs:DiscreteActionSTKRaceEnv",

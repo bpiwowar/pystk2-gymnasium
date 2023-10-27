@@ -28,6 +28,7 @@ After importing `pystk2_gymnasium`, the following environments are available:
     - `difficulty` is the difficulty of the other bots (0 to 2, default to 2)
 - `supertuxkart-simple-v0` is a simplified environment with fixed number of observations for paths (controlled by `state_paths`, default 5), items (`state_items`, default 5), karts (`state_karts`, default 5)
 - `supertuxkart-flattened-v0` has observation and action spaces simplified at the maximum (only `discrete` and `continuous` keys)
+- `supertuxkart-flattened-continuous-actions-v0` removes discrete actions (default to 0) so this is steer/acceleration only in the continuous domain
 - `supertuxkart-flattened-multidiscrete-v0` is like the previous one, but with fully multi-discrete actions. `acceleration_steps` and `steer_steps` (default to 5) control the number of discrete values for acceleration and steering respectively.
 - `supertuxkart-flattened-discrete-v0` is like the previous one, but with fully discretized actions
 

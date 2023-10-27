@@ -1,4 +1,4 @@
-from typing import Any, ClassVar, List, Optional, Type, TypedDict, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Type, TypedDict, Tuple
 import numpy as np
 import logging
 
@@ -509,3 +509,30 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
         self, action: STKDiscreteAction
     ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
         return super().step(self.from_discrete(action))
+
+class OnlyContinuousActionSTKRaceEnv(SimpleSTKRaceEnv):
+    """Removes the discrete actions"""
+    
+    def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
+        super().__init__(**kwargs)
+
+        
+        self.action_space =  spaces.Dict({
+            key: value for key, value in self.action_space.items()
+            if isinstance(value, spaces.Box)
+        })
+        
+        self.discrete_actions =  spaces.Dict({
+            key: value for key, value in self.action_space.items()
+            if isinstance(value, spaces.Discrete)
+        })
+
+
+    def step(
+        self, action: Dict
+    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+        
+        return {
+            **action,
+            **{key: 0 for key, value in self.dicrete_actions.items()}
+        }
