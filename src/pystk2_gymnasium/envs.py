@@ -182,7 +182,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         *,
         seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
-    ) -> tuple[pystk2.WorldState, Dict[str, Any]]:
+    ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
         if self.race:
             del self.race
 

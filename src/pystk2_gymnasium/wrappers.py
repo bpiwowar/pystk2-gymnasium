@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 from gymnasium import spaces
 import gymnasium as gym
 from gymnasium.core import Env
@@ -108,7 +108,7 @@ class FlattenerWrapper(gym.ObservationWrapper):
 
         return new_obs
 
-    def step(self, action) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
+    def step(self, action) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         return super().step(self.action(action))
 
     def action(self, action):
