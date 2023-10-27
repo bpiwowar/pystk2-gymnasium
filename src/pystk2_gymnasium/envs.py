@@ -235,6 +235,12 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 break
 
         return self.observation(), {}
+    
+    def close(self):
+        super().close()
+        if self.race is not None:
+            self.race.stop()
+            del self.race
 
     def step(
         self, action: STKAction
@@ -515,24 +521,22 @@ class OnlyContinuousActionSTKRaceEnv(SimpleSTKRaceEnv):
     
     def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
         super().__init__(**kwargs)
-
-        
-        self.action_space =  spaces.Dict({
-            key: value for key, value in self.action_space.items()
-            if isinstance(value, spaces.Box)
-        })
         
         self.discrete_actions =  spaces.Dict({
             key: value for key, value in self.action_space.items()
             if isinstance(value, spaces.Discrete)
         })
 
+        self.action_space =  spaces.Dict({
+            key: value for key, value in self.action_space.items()
+            if isinstance(value, spaces.Box)
+        })
+
 
     def step(
         self, action: Dict
     ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        
-        return {
+        return super().step({
             **action,
-            **{key: 0 for key, value in self.dicrete_actions.items()}
-        }
+            **{key: 0 for key, value in self.discrete_actions.items()}
+        })
