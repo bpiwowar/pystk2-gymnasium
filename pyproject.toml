@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pystk2-gymnasium"
-version = "0.1.0"
+version = "0.3.2"
 description = "Gymnasium wrapper for PySTK2"
 authors = ["Benjamin Piwowarski <benjamin@piwowarski.fr>"]
 license = "GPL"

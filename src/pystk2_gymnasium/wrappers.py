@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Dict, Tuple
 from gymnasium import spaces
 import gymnasium as gym
+from gymnasium.core import Env
 import numpy as np
 
 
@@ -36,19 +37,25 @@ class SpaceFlattener:
                 assert False, f"Type not handled {type(value)}"
 
         self.only_discrete = len(lows) == 0
+        self.only_continuous = len(counts) == 0
         discrete_space = spaces.MultiDiscrete(counts, dtype=np.int64)
+        if len(lows) > 0:
+            continuous_space = spaces.Box(
+                low=np.concatenate(lows),
+                high=np.concatenate(highs),
+                shape=(continuous_size,),
+                dtype=np.float32,
+            )
+            
         if self.only_discrete:
             self.space = discrete_space
+        elif self.only_continuous:
+            self.space = continuous_space
         else:
             self.space = spaces.Dict(
                 {
                     "discrete": discrete_space,
-                    "continuous": spaces.Box(
-                        low=np.concatenate(lows),
-                        high=np.concatenate(highs),
-                        shape=(continuous_size,),
-                        dtype=np.float32,
-                    ),
+                    "continuous": continuous_space,
                 }
             )
 
@@ -95,44 +102,54 @@ class FlattenerWrapper(gym.ObservationWrapper):
                         for key in self.action_flattener.continuous_keys
                     ]
                 )
+                if self.action_flattener.only_continuous:
+                    return continuous
                 new_obs["action"] = {"discrete": discrete, "continuous": continuous}
 
         return new_obs
 
-    def step(self, action) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+    def step(self, action) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         return super().step(self.action(action))
 
     def action(self, action):
-        if self.action_flattener.only_discrete:
-            assert len(self.action_flattener.discrete_keys) == len(action), (
+        discrete_actions = {}
+        if not self.action_flattener.only_continuous:
+            actions = action if self.action_flattener.only_discrete else action["discrete"]
+            assert len(self.action_flattener.discrete_keys) == len(actions), (
                 "Not enough discrete values: "
                 f"""expected {len(self.action_flattener.discrete_keys)}, """
                 f"""got {len(action)}"""
             )
-            action = {
+            discrete_actions = {
                 key: key_action
-                for key, key_action in zip(self.action_flattener.discrete_keys, action)
+                for key, key_action in zip(self.action_flattener.discrete_keys, actions)
             }
 
-        else:
-            assert len(self.action_flattener.discrete_keys) == len(
-                action["discrete"]
-            ), "Not enough discrete values: "
-            f"""expected {len(self.discrete_keys)}, got {len(action["discrete"])}"""
-            discrete = {
-                key: key_action
-                for key, key_action in zip(
-                    self.action_flattener.discrete_keys, action["discrete"]
-                )
-            }
-            continuous = {
-                key: action["continuous"][
-                    self.indices[ix] : self.indices[ix + 1]
+        continuous_actions = {}
+        if not self.action_flattener.only_discrete:
+            actions = action if self.action_flattener.only_continuous else action["continuous"]
+            continuous_actions = {
+                key: actions[
+                    self.action_flattener.indices[ix] : self.action_flattener.  indices[ix + 1]
                 ].reshape(shape)
                 for ix, (key, shape) in enumerate(
-                    zip(self.action_flattener.continuous_keys, self.shapes)
+                    zip(self.action_flattener.continuous_keys, self.action_flattener.shapes)
                 )
             }
-            action = {**discrete, **continuous}
+                
+        return {**discrete_actions, **continuous_actions}
 
-        return action
+class FlattenMultiDiscreteActions(gym.ActionWrapper):
+    def __init__(self, env: Env):
+        super().__init__(env)
+        assert isinstance(self.action_space, spaces.MultiDiscrete)
+        
+        self.nvec = self.action_space.nvec
+        self.action_space = spaces.Discrete(np.prod(self.action_space.nvec))
+        
+    def action(self, action):
+        actions = []
+        for n in self.nvec:
+            actions.append(action % n)
+            action = action // n
+        return actions

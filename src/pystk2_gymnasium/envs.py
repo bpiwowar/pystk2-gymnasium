@@ -1,4 +1,4 @@
-from typing import Any, ClassVar, List, Optional, Type, TypedDict, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Type, TypedDict, Tuple
 import numpy as np
 import logging
 
@@ -183,8 +183,8 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         self,
         *,
         seed: Optional[int] = None,
-        options: Optional[dict[str, Any]] = None,
-    ) -> tuple[pystk2.WorldState, dict[str, Any]]:
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
         if self.race:
             del self.race
 
@@ -241,10 +241,16 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 break
 
         return self.observation(), {}
+    
+    def close(self):
+        super().close()
+        if self.race is not None:
+            self.race.stop()
+            del self.race
 
     def step(
         self, action: STKAction
-    ) -> tuple[pystk2.WorldState, float, bool, bool, dict[str, Any]]:
+    ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
         if self.use_ai:
             self.race.step()
         else:
@@ -509,7 +515,7 @@ class Discretizer:
 
 class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
     # Wraps the actions
-    def __init__(self, acceleration_steps=10, steer_steps=10, **kwargs):
+    def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
         super().__init__(**kwargs)
 
         self.d_acceleration = Discretizer(
@@ -534,5 +540,30 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
 
     def step(
         self, action: STKDiscreteAction
-    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+    ) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         return super().step(self.from_discrete(action))
+
+class OnlyContinuousActionSTKRaceEnv(SimpleSTKRaceEnv):
+    """Removes the discrete actions"""
+    
+    def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
+        super().__init__(**kwargs)
+        
+        self.discrete_actions =  spaces.Dict({
+            key: value for key, value in self.action_space.items()
+            if isinstance(value, spaces.Discrete)
+        })
+
+        self.action_space =  spaces.Dict({
+            key: value for key, value in self.action_space.items()
+            if isinstance(value, spaces.Box)
+        })
+
+
+    def step(
+        self, action: Dict
+    ) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
+        return super().step({
+            **action,
+            **{key: 0 for key, value in self.discrete_actions.items()}
+        })
