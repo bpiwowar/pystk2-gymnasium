@@ -17,12 +17,12 @@ is available for now.
 
 After importing `pystk2_gymnasium`, the following environments are available:
 
-- `supertuxkart-v0` is the main environment containing complete observations, with the following options:
+- `supertuxkart-v0` is the main environment containing complete observations. The observation and action spaces are both dictionaries with either continuous or discrete variable. The following options can be used to modify the environment:
     - `render_mode` can be None or `human`
     - `track` defines the SuperTuxKart track to use (None for random). The full list can be found in `STKRaceEnv.TRACKS` after initialization with `initialize.initialize(with_graphics: bool)` has been called.
     - `num_kart` defines the number of karts on the track (3 by default)
     - `rank_start` defines the starting position (None for random, which is the default)
-    - `use_ai` flag (False by default) to ignore actions and use a SuperTuxKart bot
+    - `use_ai` flag (False by default) to ignore actions (when calling `step`, and use a SuperTuxKart bot)
     - `max_paths` the maximum number of the (nearest) paths (a track is made of paths) to consider in the observation state
     - `laps` is the number of laps (1 by default)
     - `difficulty` is the difficulty of the other bots (0 to 2, default to 2)
@@ -32,7 +32,15 @@ After importing `pystk2_gymnasium`, the following environments are available:
 - `supertuxkart-flattened-multidiscrete-v0` is like the previous one, but with fully multi-discrete actions. `acceleration_steps` and `steer_steps` (default to 5) control the number of discrete values for acceleration and steering respectively.
 - `supertuxkart-flattened-discrete-v0` is like the previous one, but with fully discretized actions
 
-The reward is the distance traveled.
+The reward is given by
+$$
+\mathrm{reward} r_{t} =  \frac{1}{10}(d_{t} - d_{t-1})
++ (1 - \frac{\mathrm{pos}_t}{K}) \times (3 + 7 f_t) - 0.1
++ 10 * f_t
+$$
+
+where $d_t$ is the
+overall track distance at time $t$, $\mathrm{pos}_t$ the position among the $K$ karts at time $t$, and $f_t$ is $1$ when the kart finishes the race.
 
 ## Example
 

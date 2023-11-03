@@ -11,7 +11,7 @@ repository = "https://github.com/bpiwowar/pystk2-gymnasium"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-PySuperTuxKart2 = "=0.3.3"
+PySuperTuxKart2 = "=0.3.4"
 gymnasium = ">0.29.0"
 
 [build-system]

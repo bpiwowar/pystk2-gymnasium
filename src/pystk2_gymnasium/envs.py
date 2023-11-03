@@ -134,6 +134,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 "skeed_factor": spaces.Box(
                     0.0, float("inf"), dtype=np.float32, shape=(1,)
                 ),
+                "energy": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
                 "attachment_time_left": spaces.Box(
                     0.0, float("inf"), dtype=np.float32, shape=(1,)
                 ),
@@ -143,6 +144,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 "velocity": spaces.Box(
                     float("-inf"), float("inf"), dtype=np.float32, shape=(3,)
                 ),
+                "max_steer_angle": spaces.Box(-1, 1, dtype=np.float32, shape=(1,)),
                 "distance_down_track": spaces.Box(0.0, float("inf")),
                 "front": spaces.Box(
                     -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
@@ -215,7 +217,11 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             self.kart_ix = np.random.randint(0, self.num_kart)
         logging.debug("Observed kart index %d", self.kart_ix)
 
-        if not self.use_ai:
+        if self.use_ai:
+            self.config.players[
+                self.kart_ix
+            ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
+        else:
             self.config.players[
                 self.kart_ix
             ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
@@ -261,13 +267,32 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             )
 
         kart = self.world.karts[self.kart_ix]
-        distance = kart.overall_distance
-        terminated = kart.finish_time > 0
+        dt_m1 = max(kart.overall_distance, 0)
+        terminated = kart.has_finished_race
+
+        # Get the observation and update the world state
         obs = self.observation()
-        reward = kart.overall_distance - distance
+
+        d_t = max(0, kart.overall_distance)
+        f_t = 1 if terminated else 0
+        reward = (
+            (d_t - dt_m1) / 10.0
+            + (1.0 - kart.position / self.num_kart) * (3 + 7 * f_t)
+            - 0.1
+            + 10 * f_t
+        )
 
         # --- Find the track
-        return obs, reward, terminated, False, {}
+        return (
+            obs,
+            reward,
+            terminated,
+            False,
+            {
+                "position": kart.position,
+                "distance": d_t,
+            },
+        )
 
     def render(self):
         # Just do nothing... rendering is done directly
@@ -357,6 +382,8 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             "attachment_time_left": np.array(
                 [kart.attachment.time_left], dtype=np.float32
             ),
+            "max_steer_angle": np.array([kart.max_steer_angle], dtype=np.float32),
+            "energy": np.array([kart.energy], dtype=np.float32),
             "skeed_factor": np.array([kart.skeed_factor], dtype=np.float32),
             "shield_time": np.array([kart.shield_time], dtype=np.float32),
             "jumping": 1 if kart.jumping else 0,
