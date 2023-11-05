@@ -33,6 +33,7 @@ After importing `pystk2_gymnasium`, the following environments are available:
 - `supertuxkart-flattened-discrete-v0` is like the previous one, but with fully discretized actions
 
 The reward is given by
+
 $$
 \mathrm{reward} r_{t} =  \frac{1}{10}(d_{t} - d_{t-1})
 + (1 - \frac{\mathrm{pos}_t}{K}) \times (3 + 7 f_t) - 0.1
