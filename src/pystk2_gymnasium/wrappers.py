@@ -1,8 +1,12 @@
+"""
+This module contains generic wrappers
+"""
 from typing import Any, Dict, Tuple
-from gymnasium import spaces
+
 import gymnasium as gym
-from gymnasium.core import Env
 import numpy as np
+from gymnasium import spaces
+from gymnasium.core import Env
 
 
 class SpaceFlattener:
@@ -46,7 +50,7 @@ class SpaceFlattener:
                 shape=(continuous_size,),
                 dtype=np.float32,
             )
-            
+
         if self.only_discrete:
             self.space = discrete_space
         elif self.only_continuous:
@@ -114,7 +118,9 @@ class FlattenerWrapper(gym.ObservationWrapper):
     def action(self, action):
         discrete_actions = {}
         if not self.action_flattener.only_continuous:
-            actions = action if self.action_flattener.only_discrete else action["discrete"]
+            actions = (
+                action if self.action_flattener.only_discrete else action["discrete"]
+            )
             assert len(self.action_flattener.discrete_keys) == len(actions), (
                 "Not enough discrete values: "
                 f"""expected {len(self.action_flattener.discrete_keys)}, """
@@ -127,26 +133,36 @@ class FlattenerWrapper(gym.ObservationWrapper):
 
         continuous_actions = {}
         if not self.action_flattener.only_discrete:
-            actions = action if self.action_flattener.only_continuous else action["continuous"]
+            actions = (
+                action
+                if self.action_flattener.only_continuous
+                else action["continuous"]
+            )
             continuous_actions = {
                 key: actions[
-                    self.action_flattener.indices[ix] : self.action_flattener.  indices[ix + 1]
+                    self.action_flattener.indices[ix] : self.action_flattener.indices[
+                        ix + 1
+                    ]
                 ].reshape(shape)
                 for ix, (key, shape) in enumerate(
-                    zip(self.action_flattener.continuous_keys, self.action_flattener.shapes)
+                    zip(
+                        self.action_flattener.continuous_keys,
+                        self.action_flattener.shapes,
+                    )
                 )
             }
-                
+
         return {**discrete_actions, **continuous_actions}
+
 
 class FlattenMultiDiscreteActions(gym.ActionWrapper):
     def __init__(self, env: Env):
         super().__init__(env)
         assert isinstance(self.action_space, spaces.MultiDiscrete)
-        
+
         self.nvec = self.action_space.nvec
         self.action_space = spaces.Discrete(np.prod(self.action_space.nvec))
-        
+
     def action(self, action):
         actions = []
         for n in self.nvec:

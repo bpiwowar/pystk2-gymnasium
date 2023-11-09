@@ -1,21 +1,92 @@
-import copy
-from typing import Any, ClassVar, Dict, List, Optional, TypedDict, Tuple
-import numpy as np
 import logging
+import functools
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, TypedDict
 
 import gymnasium as gym
+import numpy as np
+import pystk2
 from gymnasium import spaces
 
-import pystk2
-from pystk2_gymnasium.utils import max_enum_value, rotate, Discretizer
+from pystk2_gymnasium.utils import max_enum_value, rotate
 
 logger = logging.getLogger("pystk2-gym")
+
+
+float3D = Tuple[float, float, float]
+float4D = Tuple[float, float, float, float]
+
+
+@functools.lru_cache
+def kart_action_space():
+    return spaces.Dict(
+        {
+            # Acceleration
+            "acceleration": spaces.Box(0, 1, shape=(1,)),
+            # Steering angle
+            "steer": spaces.Box(-1, 1, shape=(1,)),
+            # Brake
+            "brake": spaces.Discrete(2),
+            # Drift
+            "drift": spaces.Discrete(2),
+            # Fire
+            "fire": spaces.Discrete(2),
+            # Nitro
+            "nitro": spaces.Discrete(2),
+            # Call the rescue bird
+            "rescue": spaces.Discrete(2),
+        }
+    )
+
+
+@functools.lru_cache
+def kart_observation_space():
+    return spaces.Dict(
+        {
+            "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
+            # Last attachment... is no attachment
+            "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
+            "skeed_factor": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
+            "energy": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
+            "attachment_time_left": spaces.Box(
+                0.0, float("inf"), dtype=np.float32, shape=(1,)
+            ),
+            "shield_time": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
+            "velocity": spaces.Box(
+                float("-inf"), float("inf"), dtype=np.float32, shape=(3,)
+            ),
+            "max_steer_angle": spaces.Box(-1, 1, dtype=np.float32, shape=(1,)),
+            "distance_down_track": spaces.Box(0.0, float("inf")),
+            "front": spaces.Box(
+                -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
+            ),
+            "jumping": spaces.Discrete(2),
+            "items_position": spaces.Sequence(
+                spaces.Box(-float("inf"), float("inf"), dtype=np.float32, shape=(3,))
+            ),
+            "items_type": spaces.Sequence(spaces.Discrete(max_enum_value(pystk2.Item))),
+            "karts_position": spaces.Sequence(
+                spaces.Box(-float("inf"), float("inf"), dtype=np.float32, shape=(3,))
+            ),
+            "paths_distance": spaces.Sequence(
+                spaces.Box(0, float("inf"), dtype=np.float32, shape=(2,))
+            ),
+            "paths_width": spaces.Sequence(
+                spaces.Box(0, float("inf"), dtype=np.float32, shape=(1,))
+            ),
+            "paths_start": spaces.Sequence(
+                spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,))
+            ),
+            "paths_end": spaces.Sequence(
+                spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,))
+            ),
+        }
+    )
 
 
 class STKAction(TypedDict):
     # :> Acceleration, between 0 and 1
     acceleration: float
-    # :> Acceleration, between 0 and 1
+    # :> Steering, between -1 and 1 (but limited by max_steer)
     steering: float
     brake: bool
     drift: bool
@@ -23,11 +94,19 @@ class STKAction(TypedDict):
     rescue: bool
 
 
-float3D = Tuple[float, float, float]
-float4D = Tuple[float, float, float, float]
+def get_action(action: STKAction):
+    return pystk2.Action(
+        brake=int(action["brake"]) > 0,
+        nitro=int(action["nitro"] > 0),
+        drift=int(action["drift"] > 0),
+        rescue=int(action["rescue"] > 0),
+        fire=int(action["fire"] > 0),
+        steer=float(action["steer"]),
+        acceleration=float(action["acceleration"]),
+    )
 
 
-class STKRaceEnv(gym.Env[Any, STKAction]):
+class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
     metadata = {"render_modes": ["human"]}
 
     INITIALIZED: ClassVar[Optional[bool]] = None
@@ -43,8 +122,8 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
 
     @staticmethod
     def initialize(with_graphics: bool):
-        if STKRaceEnv.INITIALIZED is None:
-            STKRaceEnv.INITIALIZED = with_graphics
+        if BaseSTKRaceEnv.INITIALIZED is None:
+            BaseSTKRaceEnv.INITIALIZED = with_graphics
             pystk2.init(
                 pystk2.GraphicsConfig.hd()
                 if with_graphics
@@ -52,13 +131,16 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             )
 
         assert (
-            with_graphics == STKRaceEnv.INITIALIZED
+            with_graphics == BaseSTKRaceEnv.INITIALIZED
         ), "Cannot switch from graphics to not graphics mode"
 
-        STKRaceEnv.TRACKS = pystk2.list_tracks(pystk2.RaceConfig.RaceMode.NORMAL_RACE)
+        BaseSTKRaceEnv.TRACKS = pystk2.list_tracks(
+            pystk2.RaceConfig.RaceMode.NORMAL_RACE
+        )
 
     def __init__(
         self,
+        *,
         render_mode=None,
         track=None,
         num_kart=3,
@@ -74,24 +156,19 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             to None
         :param track: Track to use (None = random)
         :param num_kart: Number of karts, defaults to 3
-        :param position: The position of the controlled kart, defaults to None
-            for random, 0 to num_kart-1 assigns a rank, all the other values
-            discard the controlled kart.
         :param max_paths: maximum number of paths ahead
-        :param difficulty: difficulty (0 to 2)
+        :param difficulty: AI bot skill level (from lowest 0 to highest 2)
         :param laps: Number of laps (default 1)
         """
         super().__init__()
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
-        STKRaceEnv.initialize(render_mode == "human")
+        BaseSTKRaceEnv.initialize(render_mode == "human")
 
         # Setup the variables
         self.default_track = track
         self.difficulty = difficulty
-        self.rank_start = rank_start
-        self.use_ai = use_ai
         self.laps = laps
         self.max_paths = max_paths
         self.num_kart = num_kart
@@ -102,82 +179,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         self.kart_ix = None
         self.current_track = None
 
-        # We have 4 actions, corresponding to "right", "up", "left", "down"
-        self.action_space = spaces.Dict(
-            {
-                # Acceleration
-                "acceleration": spaces.Box(0, 1, shape=(1,)),
-                # Steering angle
-                "steer": spaces.Box(-1, 1, shape=(1,)),
-                # Brake
-                "brake": spaces.Discrete(2),
-                # Drift
-                "drift": spaces.Discrete(2),
-                # Fire
-                "fire": spaces.Discrete(2),
-                # Nitro
-                "nitro": spaces.Discrete(2),
-                # Call the rescue bird
-                "rescue": spaces.Discrete(2),
-            }
-        )
-
-        self.observation_space = spaces.Dict(
-            {
-                "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
-                # Last attachment... is no attachment
-                "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
-                "skeed_factor": spaces.Box(
-                    0.0, float("inf"), dtype=np.float32, shape=(1,)
-                ),
-                "energy": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
-                "attachment_time_left": spaces.Box(
-                    0.0, float("inf"), dtype=np.float32, shape=(1,)
-                ),
-                "shield_time": spaces.Box(
-                    0.0, float("inf"), dtype=np.float32, shape=(1,)
-                ),
-                "velocity": spaces.Box(
-                    float("-inf"), float("inf"), dtype=np.float32, shape=(3,)
-                ),
-                "max_steer_angle": spaces.Box(-1, 1, dtype=np.float32, shape=(1,)),
-                "distance_down_track": spaces.Box(0.0, float("inf")),
-                "front": spaces.Box(
-                    -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
-                ),
-                "jumping": spaces.Discrete(2),
-                "items_position": spaces.Sequence(
-                    spaces.Box(
-                        -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
-                    )
-                ),
-                "items_type": spaces.Sequence(
-                    spaces.Discrete(max_enum_value(pystk2.Item))
-                ),
-                "karts_position": spaces.Sequence(
-                    spaces.Box(
-                        -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
-                    )
-                ),
-                "paths_distance": spaces.Sequence(
-                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(2,))
-                ),
-                "paths_width": spaces.Sequence(
-                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(1,))
-                ),
-                "paths_start": spaces.Sequence(
-                    spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,))
-                ),
-                "paths_end": spaces.Sequence(
-                    spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,))
-                ),
-            }
-        )
-
-        if self.use_ai:
-            self.observation_space["action"] = self.action_space
-
-    def reset(
+    def reset_race(
         self,
         *,
         seed: Optional[int] = None,
@@ -209,20 +211,9 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                 ix
             ].controller = pystk2.PlayerConfig.Controller.AI_CONTROL
 
-        # Set the controlled kart position (if any)
-        self.kart_ix = self.rank_start
-        if self.kart_ix is None:
-            self.kart_ix = np.random.randint(0, self.num_kart)
-        logging.debug("Observed kart index %d", self.kart_ix)
-
-        if self.use_ai:
-            self.config.players[
-                self.kart_ix
-            ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
-        else:
-            self.config.players[
-                self.kart_ix
-            ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+    def warmup_race(self):
+        """Creates a new race and step until the first move"""
+        assert self.race is None
 
         self.race = pystk2.Race(self.config)
 
@@ -238,74 +229,21 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             if self.world.phase == pystk2.WorldState.Phase.GO_PHASE:
                 break
 
-        return self.get_observation(), {}
-    
     def close(self):
         super().close()
         if self.race is not None:
             self.race.stop()
             del self.race
 
-    def step(
-        self, action: STKAction
-    ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
-        if self.use_ai:
-            self.race.step()
-        else:
-            self.race.step(
-                pystk2.Action(
-                    brake=int(action["brake"]) > 0,
-                    nitro=int(action["nitro"] > 0),
-                    drift=int(action["drift"] > 0),
-                    rescue=int(action["rescue"] > 0),
-                    fire=int(action["fire"] > 0),
-                    steer=float(action["steer"]),
-                    acceleration=float(action["acceleration"]),
-                )
-            )
-
-        kart = self.world.karts[self.kart_ix]
-        dt_m1 = max(kart.overall_distance, 0)
-        terminated = kart.has_finished_race
-
-        # Get the observation and update the world state
-        obs = self.get_observation()
-
-        d_t = max(0, kart.overall_distance)
-        f_t = 1 if terminated else 0
-        reward = (
-            (d_t - dt_m1) / 10.0
-            + (1.0 - kart.position / self.num_kart) * (3 + 7 * f_t)
-            - 0.1
-            + 10 * f_t
-        )
-
-        # --- Find the track
-        return (
-            obs,
-            reward,
-            terminated,
-            False,
-            {
-                "position": kart.position,
-                "distance": d_t,
-            },
-        )
-
-    def render(self):
-        # Just do nothing... rendering is done directly
-        pass
-
-    def get_observation(self):
-        self.world.update()
-        kart = self.world.karts[self.kart_ix]
+    def get_observation(self, kart_ix):
+        kart = self.world.karts[kart_ix]
 
         def kartview(x):
             """Returns a vector in the kart frame
-            
+
             X right, Y up, Z forwards
             """
-            return rotate(x - kart.location, kart.rotation)            
+            return rotate(x - kart.location, kart.rotation)
 
         path_ix = next(
             ix[0]
@@ -329,9 +267,6 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         def list_permute(list, sort_ix):
             list[:] = (list[ix] for ix in sort_ix)
 
-        # Sort closest to front
-        x_front = kartview(kart.front)
-
         def sort_closest(positions, *lists):
             distances = [np.linalg.norm(p) * np.sign(p[2]) for p in positions]
 
@@ -350,7 +285,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         karts_position = [
             kartview(other_kart.location)
             for ix, other_kart in enumerate(self.world.karts)
-            if ix != self.kart_ix
+            if ix != kart_ix
         ]
         sort_closest(karts_position)
 
@@ -361,7 +296,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         # Add action if using AI bot
         obs = {}
         if self.use_ai:
-            action = self.race.get_kart_action(self.kart_ix)
+            action = self.race.get_kart_action(kart_ix)
             obs = {
                 "action": {
                     "steer": action.steer,
@@ -409,181 +344,102 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             ),
         }
 
-class PolarObservations(gym.ObservationWrapper):
-    """Modifies position to polar positions
-    
-    input: X right, Y up, Z forwards 
-    output: (angle in the ZX plane, angle in the ZY plane, distance)
-    """
-    
-    #: Keys to transform
-    KEYS = ["items_position", "karts_position", "paths_start", "paths_end"]
-    
-    def __init__(self, env: gym.Env, **kwargs):
-        super().__init__(env, **kwargs)
-        
-    def observation(self, obs):
-        # Shallow copy
-        obs = {**obs}
-        
-        for key in PolarObservations.KEYS:
-            v = obs[key]
-            distance = np.linalg.norm(v, axis=1)
-            angle_zx = np.arctan2(v[:, 0], v[:, 2])
-            angle_zy = np.arctan2(v[:, 1], v[:, 2])
-            v[:, 0], v[:, 1], v[:, 2] = angle_zx, angle_zy, distance
-        return obs
-        
 
-class ConstantSizedObservations(gym.ObservationWrapper):
-    def __init__(self, env: gym.Env, *, state_items=5, state_karts=5, state_paths=5, **kwargs):
-        """A simpler race environment with fixed width data
+class STKRaceEnv(BaseSTKRaceEnv):
+    """Single player race environment"""
 
-        :param state_items: The number of items, defaults to 5
-        :param state_karts: The number of karts, defaults to 5
+    def __init__(self, *, rank_start=None, use_ai=False, **kwargs):
+        """Creates a new race
+
+        :param use_ai: Use STK built         AI bot instead of the agent action
+        :param rank_start: The position of the controlled kart, defaults to None
+            for random, 0 to num_kart-1 assigns a rank, all the other values
+            discard the controlled kart.
+        :param kwargs: General parameters, see BaseSTKRaceEnv
         """
-        super().__init__(env, **kwargs)
-        self.state_items = state_items
-        self.state_karts = state_karts
-        self.state_paths = state_paths
+        super().__init__(**kwargs)
 
-        # Override some keys in the observation space
-        self._observation_space = space = copy.deepcopy(self.env.observation_space)
+        # Setup the variables
+        self.rank_start = rank_start
+        self.use_ai = use_ai
 
-        space["paths_distance"] = spaces.Box(
-            0, float("inf"), shape=(self.state_paths, 2), dtype=np.float32
-        )
-        space["paths_width"] = spaces.Box(
-            0, float("inf"), shape=(self.state_paths, 1), dtype=np.float32
-        )
-        space["paths_start"] = spaces.Box(
-            -float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32
-        )
-        space["paths_end"] = spaces.Box(
-            -float("inf"), float("inf"), shape=(self.state_paths, 3), dtype=np.float32
-        )
-        space["items_position"] = spaces.Box(
-            -float("inf"), float("inf"), shape=(self.state_items, 3), dtype=np.float32
-        )
-        space["items_type"] = spaces.Box(
-            0, max_enum_value(pystk2.Item), dtype=np.int64, shape=(self.state_items,)
-        )
-        space["karts_position"] = spaces.Box(
-            -float("inf"), float("inf"), shape=(self.state_karts, 3)
-        )
+        # Those will be set when the race is setup
+        self.kart_ix = None
 
-    def make_tensor(self, state, name: str):
-        value = state[name]
-        space = self.observation_space[name]
+        # We have 4 actions, corresponding to "right", "up", "left", "down"
+        self.action_space = kart_action_space()
+        self.observation_space = kart_observation_space()
 
-        value = np.stack(value)
-        assert (
-            space.shape[1:] == value.shape[1:]
-        ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+        if self.use_ai:
+            self.observation_space["action"] = self.action_space
 
-        delta = space.shape[0] - value.shape[0]
-        if delta > 0:
-            shape = [delta] + list(space.shape[1:])
-            value = np.concatenate([value, np.zeros(shape, dtype=space.dtype)], axis=0)
-        elif delta < 0:
-            value = value[:delta]
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
 
-        assert (
-            space.shape == value.shape
-        ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
-        state[name] = value
+        super().reset_race()
 
-    def observation(self, state):
-        # Shallow copy
-        state = {**state}
-        
-        # Ensures that the size of observations is constant
-        self.make_tensor(state, "paths_distance")
-        self.make_tensor(state, "paths_width")
-        self.make_tensor(state, "paths_start")
-        self.make_tensor(state, "paths_end")
-        self.make_tensor(state, "items_position")
-        self.make_tensor(state, "items_type")
-        self.make_tensor(state, "karts_position")
+        # Set the controlled kart position (if any)
+        self.kart_ix = self.rank_start
+        if self.kart_ix is None:
+            self.kart_ix = np.random.randint(0, self.num_kart)
+        logging.debug("Observed kart index %d", self.kart_ix)
 
-        return state
+        if self.use_ai:
+            self.config.players[
+                self.kart_ix
+            ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
+        else:
+            self.config.players[
+                self.kart_ix
+            ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
 
+        self.warmup_race()
+        self.world.update()
 
-class STKDiscreteAction(STKAction):
-    acceleration: int
-    steering: int
-
-
-class DiscreteActionsWrapper(gym.ActionWrapper):
-    # Wraps the actions
-    def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=5, **kwargs):
-        super().__init__(env, **kwargs)
-
-        self._action_space = copy.deepcopy(env.action_space)
-        
-        self.d_acceleration = Discretizer(
-            self.action_space["acceleration"], acceleration_steps
-        )
-        self._action_space["acceleration"] = self.d_acceleration.space
-        
-        self.d_steer = Discretizer(self.action_space["steer"], steer_steps)
-        self._action_space["steer"] = self.d_steer.space
-
-        if "action" in self.observation_space:
-            self._observation_space = copy.deepcopy(self.observation_space)
-            self._observation_space["action"]["steer"] = self.d_steer.space
-            self._observation_space["action"]["acceleration"] = self.d_acceleration.space
-
-    def from_discrete(self, action):
-        action = {**action}
-        action["acceleration"] = self.d_acceleration.continuous(action["acceleration"])
-        action["steer"] = self.d_steer.continuous(action["steer"])
-        return action
-
-    def to_discrete(self, action):
-        action = {**action}
-        action["acceleration"] = self.d_acceleration.discretize(action["acceleration"])
-        action["steer"] = self.d_steer.discretize(action["steer"])
-        return action
-
+        return self.get_observation(self.kart_ix), {}
 
     def step(
-        self, action
-    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        """Modifies the :attr:`env` after calling :meth:`step` using :meth:`self.observation` on the returned observations."""
-        # Transforms the action when part of the environment
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        if "action" in obs:
-            obs["action"] = self.to_discrete(obs["action"])
-        return obs, reward, terminated, truncated, info
+        self, action: STKAction
+    ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
+        if self.use_ai:
+            self.race.step()
+        else:
+            self.race.step(get_action(action))
 
-    
-    def action(
-        self, action: STKDiscreteAction
-    ) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
-        return self.from_discrete(action)
+        self.world.update()
 
-class OnlyContinuousActionsWrapper(gym.ActionWrapper):
-    """Removes the discrete actions"""
-    
-    def __init__(self, env: gym.Env, **kwargs):
-        super().__init__(env, **kwargs)
-        
-        self.discrete_actions =  spaces.Dict({
-            key: value for key, value in env.action_space.items()
-            if isinstance(value, spaces.Discrete)
-        })
+        kart = self.world.karts[self.kart_ix]
+        dt_m1 = max(kart.overall_distance, 0)
+        terminated = kart.has_finished_race
 
-        self._action_space =  spaces.Dict({
-            key: value for key, value in env.action_space.items()
-            if isinstance(value, spaces.Box)
-        })
+        # Get the observation and update the world state
+        obs = self.get_observation(self.kart_ix)
 
+        d_t = max(0, kart.overall_distance)
+        f_t = 1 if terminated else 0
+        reward = (
+            (d_t - dt_m1) / 10.0
+            + (1.0 - kart.position / self.num_kart) * (3 + 7 * f_t)
+            - 0.1
+            + 10 * f_t
+        )
 
-    def action(
-        self, action: Dict
-    ) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
-        return {
-            **action,
-            **{key: 0 for key, _ in self.discrete_actions.items()}
-        }
+        # --- Find the track
+        return (
+            obs,
+            reward,
+            terminated,
+            False,
+            {
+                "position": kart.position,
+                "distance": d_t,
+            },
+        )
+
+    def render(self):
+        # Just do nothing... rendering is done directly
+        pass

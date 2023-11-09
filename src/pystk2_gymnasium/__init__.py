@@ -4,8 +4,7 @@ register(
     id="supertuxkart/full-v0",
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
-    additional_wrappers=(
-    )
+    additional_wrappers=(),
 )
 
 register(
@@ -13,9 +12,13 @@ register(
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
-        WrapperSpec("constant-size", "pystk2_gymnasium.envs:ConstantSizedObservations", {}),
-        WrapperSpec("polar", "pystk2_gymnasium.envs:PolarObservations", {}),
-    )
+        WrapperSpec(
+            "constant-size",
+            "pystk2_gymnasium.stk_wrappers:ConstantSizedObservations",
+            {},
+        ),
+        WrapperSpec("polar", "pystk2_gymnasium.stk_wrappers:PolarObservations", {}),
+    ),
 )
 
 # Flattens the spaces: join continuous actions, transform discrete into multidiscrete
@@ -25,8 +28,12 @@ register(
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
-        WrapperSpec("constant-size", "pystk2_gymnasium.envs:ConstantSizedObservations", {}),
-        WrapperSpec("polar", "pystk2_gymnasium.envs:PolarObservations", {}),
+        WrapperSpec(
+            "constant-size",
+            "pystk2_gymnasium.stk_wrappers:ConstantSizedObservations",
+            {},
+        ),
+        WrapperSpec("polar", "pystk2_gymnasium.stk_wrappers:PolarObservations", {}),
         WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
     ),
 )
@@ -37,9 +44,17 @@ register(
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
-        WrapperSpec("constant-size", "pystk2_gymnasium.envs:ConstantSizedObservations", {}),
-        WrapperSpec("polar", "pystk2_gymnasium.envs:PolarObservations", {}),
-        WrapperSpec("only-continous-actions", "pystk2_gymnasium.envs:OnlyContinuousActionsWrapper", {}),
+        WrapperSpec(
+            "constant-size",
+            "pystk2_gymnasium.stk_wrappers:ConstantSizedObservations",
+            {},
+        ),
+        WrapperSpec("polar", "pystk2_gymnasium.stk_wrappers:PolarObservations", {}),
+        WrapperSpec(
+            "only-continous-actions",
+            "pystk2_gymnasium.stk_wrappers:OnlyContinuousActionsWrapper",
+            {},
+        ),
         WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
     ),
 )
@@ -50,9 +65,17 @@ register(
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
-        WrapperSpec("constant-size", "pystk2_gymnasium.envs:ConstantSizedObservations", {}),
-        WrapperSpec("polar", "pystk2_gymnasium.envs:PolarObservations", {}),
-        WrapperSpec("discrete-actions", "pystk2_gymnasium.envs:DiscreteActionsWrapper", {}),
+        WrapperSpec(
+            "constant-size",
+            "pystk2_gymnasium.stk_wrappers:ConstantSizedObservations",
+            {},
+        ),
+        WrapperSpec("polar", "pystk2_gymnasium.stk_wrappers:PolarObservations", {}),
+        WrapperSpec(
+            "discrete-actions",
+            "pystk2_gymnasium.stk_wrappers:DiscreteActionsWrapper",
+            {},
+        ),
         WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
     ),
 )
@@ -63,10 +86,22 @@ register(
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
     additional_wrappers=(
-        WrapperSpec("constant-size", "pystk2_gymnasium.envs:ConstantSizedObservations", {}),
-        WrapperSpec("polar", "pystk2_gymnasium.envs:PolarObservations", {}),
-        WrapperSpec("discrete-actions", "pystk2_gymnasium.envs:DiscreteActionsWrapper", {}),
+        WrapperSpec(
+            "constant-size",
+            "pystk2_gymnasium.stk_wrappers:ConstantSizedObservations",
+            {},
+        ),
+        WrapperSpec("polar", "pystk2_gymnasium.stk_wrappers:PolarObservations", {}),
+        WrapperSpec(
+            "discrete-actions",
+            "pystk2_gymnasium.stk_wrappers:DiscreteActionsWrapper",
+            {},
+        ),
         WrapperSpec("obs-flattener", "pystk2_gymnasium.wrappers:FlattenerWrapper", {}),
-        WrapperSpec("flatten-multi-discrete", "pystk2_gymnasium.wrappers:FlattenMultiDiscreteActions", {}),
+        WrapperSpec(
+            "flatten-multi-discrete",
+            "pystk2_gymnasium.wrappers:FlattenMultiDiscreteActions",
+            {},
+        ),
     ),
 )
