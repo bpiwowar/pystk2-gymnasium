@@ -1,5 +1,8 @@
+from dataclasses import dataclass
+from itertools import repeat
 import logging
 import functools
+import sys
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, TypedDict
 
 import gymnasium as gym
@@ -39,8 +42,8 @@ def kart_action_space():
 
 
 @functools.lru_cache
-def kart_observation_space():
-    return spaces.Dict(
+def kart_observation_space(use_ai: bool):
+    space = spaces.Dict(
         {
             "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
             # Last attachment... is no attachment
@@ -81,6 +84,12 @@ def kart_observation_space():
             ),
         }
     )
+    
+    if use_ai:
+        space["action"] = kart_action_space()["action"]
+        
+    return space
+
 
 
 class STKAction(TypedDict):
@@ -176,20 +185,16 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         # Those will be set when the race is setup
         self.race = None
         self.world = None
-        self.kart_ix = None
         self.current_track = None
 
     def reset_race(
         self,
+        random: np.random.RandomState,
         *,
-        seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
         if self.race:
             del self.race
-
-        # Set seed
-        random = np.random.RandomState(seed)
 
         # Setup the race configuration
         self.current_track = self.default_track
@@ -198,7 +203,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             logging.info("Selected %s", self.current_track)
         self.config = pystk2.RaceConfig(
             num_kart=self.num_kart,
-            seed=seed or 0,
+            seed=random.randint(2**16),
             difficulty=self.difficulty,
             track=self.current_track,
             laps=self.laps,
@@ -234,8 +239,37 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         if self.race is not None:
             self.race.stop()
             del self.race
+            
+    def world_update(self):
+        """Update world state, but keep some information to compute reward"""
+        self.last_overall_distances = [max(kart.overall_distance, 0) for kart in self.world.karts]
+        self.world.update()
 
-    def get_observation(self, kart_ix):
+    def get_state(self, kart_ix: int, use_ai: bool):
+        kart = self.world.karts[kart_ix]
+        terminated = kart.has_finished_race
+
+        # Get the observation and update the world state
+        obs = self.get_observation(kart_ix, use_ai)
+
+        d_t = max(0, kart.overall_distance)
+        f_t = 1 if terminated else 0
+        reward = (
+            (d_t - self.last_overall_distances[kart_ix]) / 10.0
+            + (1.0 - kart.position / self.num_kart) * (3 + 7 * f_t)
+            - 0.1
+            + 10 * f_t
+        )
+        return (
+            obs,
+            reward,
+            terminated,
+            {
+                "position": kart.position,
+                "distance": d_t,
+            },
+        )
+    def get_observation(self, kart_ix, use_ai):
         kart = self.world.karts[kart_ix]
 
         def kartview(x):
@@ -295,7 +329,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 
         # Add action if using AI bot
         obs = {}
-        if self.use_ai:
+        if use_ai:
             action = self.race.get_kart_action(kart_ix)
             obs = {
                 "action": {
@@ -343,6 +377,10 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
                 kartview(x[1]) for x in iterate_from(self.track.path_nodes, path_ix)
             ),
         }
+        
+    def render(self):
+        # Just do nothing... rendering is done directly
+        pass
 
 
 class STKRaceEnv(BaseSTKRaceEnv):
@@ -368,10 +406,7 @@ class STKRaceEnv(BaseSTKRaceEnv):
 
         # We have 4 actions, corresponding to "right", "up", "left", "down"
         self.action_space = kart_action_space()
-        self.observation_space = kart_observation_space()
-
-        if self.use_ai:
-            self.observation_space["action"] = self.action_space
+        self.observation_space = kart_observation_space(self.use_ai)
 
     def reset(
         self,
@@ -379,8 +414,9 @@ class STKRaceEnv(BaseSTKRaceEnv):
         seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
+        random = np.random.RandomState(seed)
 
-        super().reset_race()
+        super().reset_race(random, options=options)
 
         # Set the controlled kart position (if any)
         self.kart_ix = self.rank_start
@@ -400,7 +436,7 @@ class STKRaceEnv(BaseSTKRaceEnv):
         self.warmup_race()
         self.world.update()
 
-        return self.get_observation(self.kart_ix), {}
+        return self.get_observation(self.kart_ix, self.use_ai), {}
 
     def step(
         self, action: STKAction
@@ -410,36 +446,119 @@ class STKRaceEnv(BaseSTKRaceEnv):
         else:
             self.race.step(get_action(action))
 
-        self.world.update()
+        self.world_update()
 
-        kart = self.world.karts[self.kart_ix]
-        dt_m1 = max(kart.overall_distance, 0)
-        terminated = kart.has_finished_race
+        obs, reward, terminated, info = self.get_state(self.kart_ix, self.use_ai)
 
-        # Get the observation and update the world state
-        obs = self.get_observation(self.kart_ix)
-
-        d_t = max(0, kart.overall_distance)
-        f_t = 1 if terminated else 0
-        reward = (
-            (d_t - dt_m1) / 10.0
-            + (1.0 - kart.position / self.num_kart) * (3 + 7 * f_t)
-            - 0.1
-            + 10 * f_t
-        )
-
-        # --- Find the track
         return (
             obs,
             reward,
             terminated,
             False,
-            {
-                "position": kart.position,
-                "distance": d_t,
-            },
+            info
         )
 
-    def render(self):
-        # Just do nothing... rendering is done directly
-        pass
+@dataclass
+class AgentSpec:
+    rank_start: Optional[int] = None
+    use_ai: bool = False
+    
+
+class STKRaceMultiEnv(BaseSTKRaceEnv):
+    """Multi-agent race environment"""
+
+    def __init__(self, *, agents: List[AgentSpec]=None, **kwargs):
+        """Creates a new race
+
+        :param rank_start: The position of the controlled kart, defaults to None
+            for random, 0 to num_kart-1 assigns a rank, all the other values
+            discard the controlled kart.
+        :param kwargs: General parameters, see BaseSTKRaceEnv
+        """
+        super().__init__(**kwargs)
+
+        # Setup the variables
+        self.agents = agents
+
+        # Kart index for each agent (set when the race is setup)
+        self.kart_indices = None
+
+        ranked_agents = [agent for agent in agents if agent.rank_start is not None]
+        
+        assert all(agent.rank_start < self.num_kart for agent in ranked_agents), "Karts must have all have a valid position"
+        assert len(set(ranked_agents)) == len(ranked_agents), "Some agents have the same starting position"
+        
+        self.free_positions = [ix for ix in range(self.num_kart) if ix not in ranked_agents]
+        
+        self.action_space = spaces.Tuple(repeat(kart_action_space(), len(self.agents)))
+        self.observation_space = spaces.Tuple(kart_observation_space(agent.use_ai) for agent in self.agents)
+
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
+
+        random = np.random.RandomState(seed)
+
+        super().reset_race(random, options=options)
+
+        # Choose positions for agent karts
+        np.random.shuffle(self.free_positions)
+        pos_iter = iter(self.free_positions)
+        self.kart_indices = []
+        for agent in self.agents:
+            kart_ix = agent.rank_start or next(pos_iter)
+            self.kart_indices.append(kart_ix)
+            self.config.players[
+                kart_ix
+            ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
+            if not agent.use_ai:
+                self.config.players[
+                    kart_ix
+                ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+            
+        logging.debug("Observed kart indices %s", self.kart_indices)
+
+        self.warmup_race()
+        self.world.update()
+
+        return tuple(self.get_observation(ix, agent.use_ai) for agent, ix in zip(self.agents, self.kart_indices)), {}
+
+    def step(
+        self, actions: Tuple[STKAction]
+    ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
+        # Performs the action
+        assert len(actions) == len(self.agents)
+        self.race.step([get_action(action) for action in actions])
+
+        # Update the world state
+        self.world_update()
+
+        observations = []
+        rewards = []
+        infos = []
+        terminated_count = 0
+        for agent, kart_ix in zip(self.agents, self.kart_indices):
+            obs, reward, terminated, info = self.get_state(kart_ix, agent.use_ai)
+            observations.append(obs)
+            rewards.append(reward)
+            if terminated:
+                terminated_count += 1
+            infos.append(info)
+
+
+        return (
+            tuple(observations),
+            # Only scalar rewards can be given
+            np.sum(rewards),
+            terminated_count == len(self.agents),
+            False,
+            {
+                "infos": infos,
+                # We put back individual rewards
+                "rewards": rewards
+            }
+        )

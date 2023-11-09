@@ -8,6 +8,13 @@ register(
 )
 
 register(
+    id="supertuxkart/multi-full-v0",
+    entry_point="pystk2_gymnasium.envs:STKRaceMultiEnv",
+    max_episode_steps=1500,
+    additional_wrappers=(),
+)
+
+register(
     id="supertuxkart/simple-v0",
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",
     max_episode_steps=1500,
