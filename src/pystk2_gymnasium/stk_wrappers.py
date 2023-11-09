@@ -155,7 +155,7 @@ class DiscreteActionsWrapper(gym.ActionWrapper):
         action["steer"] = self.d_steer.discretize(action["steer"])
         return action
 
-    def step(self, action) -> Tuple[Any, float, bool, bool, dict[str, Any]]:
+    def step(self, action) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         # Transforms the action when part of the environment
         obs, reward, terminated, truncated, info = self.env.step(action)
         if "action" in obs:
