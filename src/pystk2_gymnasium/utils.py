@@ -1,4 +1,6 @@
+from typing import Type
 import numpy as np
+import gymnasium.spaces as spaces
 
 # Tries to use numba if it exists
 try:
@@ -42,3 +44,33 @@ def rotate(v: np.array, q: np.array):
         ],
         dtype=v.dtype,
     )
+
+
+def max_enum_value(EnumType: Type):
+    """Returns the maximum enum value in a given enum type"""
+    return max([v.value for v in EnumType.Type.__members__.values()]) + 1
+
+
+class Discretizer:
+    def __init__(self, space: spaces.Box, values: int):
+        self.max_value = float(space.high)
+        self.min_value = float(space.low)
+        self.values = values
+        self.space = spaces.Discrete(values)
+
+    def discretize(self, value: float):
+        v = int(
+            (value - self.min_value)
+            * (self.values - 1)
+            / (self.max_value - self.min_value)
+        )
+        assert v >= 0, f"discretized value {v} is below 0"
+        if v >= self.values:
+            v -= 1
+        assert v <= self.values, f"discretized value {v} is above {self.values-1}"
+        return v
+
+    def continuous(self, value: int):
+        return (self.max_value - self.min_value) * value / (
+            self.values - 1
+        ) + self.min_value

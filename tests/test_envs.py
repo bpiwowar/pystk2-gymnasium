@@ -2,7 +2,7 @@ import gymnasium as gym
 import pytest
 import pystk2_gymnasium
 
-envs = [key for key in gym.envs.registry.keys() if key.startswith("supertuxkart-")]
+envs = [key for key in gym.envs.registry.keys() if key.startswith("supertuxkart/")]
 
 @pytest.mark.parametrize("name", envs)
 def test_env(name):

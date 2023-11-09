@@ -1,4 +1,5 @@
-from typing import Any, ClassVar, Dict, List, Optional, Type, TypedDict, Tuple
+import copy
+from typing import Any, ClassVar, Dict, List, Optional, TypedDict, Tuple
 import numpy as np
 import logging
 
@@ -6,7 +7,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 import pystk2
-from pystk2_gymnasium.utils import rotate
+from pystk2_gymnasium.utils import max_enum_value, rotate, Discretizer
 
 logger = logging.getLogger("pystk2-gym")
 
@@ -24,11 +25,6 @@ class STKAction(TypedDict):
 
 float3D = Tuple[float, float, float]
 float4D = Tuple[float, float, float, float]
-
-
-def max_enum_value(EnumType: Type):
-    """Returns the maximum enum value in a given enum type"""
-    return max([v.value for v in EnumType.Type.__members__.values()]) + 1
 
 
 class STKRaceEnv(gym.Env[Any, STKAction]):
@@ -155,7 +151,9 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                         -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
                     )
                 ),
-                "items_type": spaces.Discrete(max_enum_value(pystk2.Item)),
+                "items_type": spaces.Sequence(
+                    spaces.Discrete(max_enum_value(pystk2.Item))
+                ),
                 "karts_position": spaces.Sequence(
                     spaces.Box(
                         -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
@@ -168,10 +166,10 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                     spaces.Box(0, float("inf"), dtype=np.float32, shape=(1,))
                 ),
                 "paths_start": spaces.Sequence(
-                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(3,))
+                    spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,))
                 ),
                 "paths_end": spaces.Sequence(
-                    spaces.Box(0, float("inf"), dtype=np.float32, shape=(3,))
+                    spaces.Box(float("-inf"), float("inf"), dtype=np.float32, shape=(3,))
                 ),
             }
         )
@@ -240,7 +238,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             if self.world.phase == pystk2.WorldState.Phase.GO_PHASE:
                 break
 
-        return self.observation(), {}
+        return self.get_observation(), {}
     
     def close(self):
         super().close()
@@ -271,7 +269,7 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         terminated = kart.has_finished_race
 
         # Get the observation and update the world state
-        obs = self.observation()
+        obs = self.get_observation()
 
         d_t = max(0, kart.overall_distance)
         f_t = 1 if terminated else 0
@@ -298,12 +296,16 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         # Just do nothing... rendering is done directly
         pass
 
-    def observation(self):
+    def get_observation(self):
         self.world.update()
         kart = self.world.karts[self.kart_ix]
 
         def kartview(x):
-            return rotate(x - kart.location, kart.rotation)
+            """Returns a vector in the kart frame
+            
+            X right, Y up, Z forwards
+            """
+            return rotate(x - kart.location, kart.rotation)            
 
         path_ix = next(
             ix[0]
@@ -331,10 +333,10 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
         x_front = kartview(kart.front)
 
         def sort_closest(positions, *lists):
-            distances = [(p - x_front) @ x_front for p in positions]
+            distances = [np.linalg.norm(p) * np.sign(p[2]) for p in positions]
 
             # Change distances: if d < 0, d <- -d+max_d+1
-            # so that negative distances are after
+            # so that negative distances are after positives ones
             max_d = max(distances)
             distances_2 = [d if d >= 0 else -d + max_d + 1 for d in distances]
 
@@ -371,8 +373,6 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
                     "acceleration": action.acceleration,
                 }
             }
-            if isinstance(self, DiscreteActionSTKRaceEnv):
-                obs["action"] = self.to_discrete(obs["action"])
 
         return {
             **obs,
@@ -394,36 +394,61 @@ class STKRaceEnv(gym.Env[Any, STKAction]):
             "velocity": kart.velocity_lc,
             "front": kartview(kart.front),
             # Items (kart point of view)
-            "items_position": items_position,
-            "items_type": items_type,
+            "items_position": tuple(items_position),
+            "items_type": tuple(items_type),
             # Other karts (kart point of view)
-            "karts_position": karts_position,
+            "karts_position": tuple(karts_position),
             # Paths
-            "paths_distance": list(iterate_from(self.track.path_distance, path_ix)),
-            "paths_width": list(iterate_from(self.track.path_width, path_ix)),
-            "paths_start": list(
-                x[0] for x in iterate_from(self.track.path_nodes, path_ix)
+            "paths_distance": tuple(iterate_from(self.track.path_distance, path_ix)),
+            "paths_width": tuple(iterate_from(self.track.path_width, path_ix)),
+            "paths_start": tuple(
+                kartview(x[0]) for x in iterate_from(self.track.path_nodes, path_ix)
             ),
-            "paths_end": list(
-                x[1] for x in iterate_from(self.track.path_nodes, path_ix)
+            "paths_end": tuple(
+                kartview(x[1]) for x in iterate_from(self.track.path_nodes, path_ix)
             ),
         }
 
+class PolarObservations(gym.ObservationWrapper):
+    """Modifies position to polar positions
+    
+    input: X right, Y up, Z forwards 
+    output: (angle in the ZX plane, angle in the ZY plane, distance)
+    """
+    
+    #: Keys to transform
+    KEYS = ["items_position", "karts_position", "paths_start", "paths_end"]
+    
+    def __init__(self, env: gym.Env, **kwargs):
+        super().__init__(env, **kwargs)
+        
+    def observation(self, obs):
+        # Shallow copy
+        obs = {**obs}
+        
+        for key in PolarObservations.KEYS:
+            v = obs[key]
+            distance = np.linalg.norm(v, axis=1)
+            angle_zx = np.arctan2(v[:, 0], v[:, 2])
+            angle_zy = np.arctan2(v[:, 1], v[:, 2])
+            v[:, 0], v[:, 1], v[:, 2] = angle_zx, angle_zy, distance
+        return obs
+        
 
-class SimpleSTKRaceEnv(STKRaceEnv):
-    def __init__(self, *, state_items=5, state_karts=5, state_paths=5, **kwargs):
+class ConstantSizedObservations(gym.ObservationWrapper):
+    def __init__(self, env: gym.Env, *, state_items=5, state_karts=5, state_paths=5, **kwargs):
         """A simpler race environment with fixed width data
 
         :param state_items: The number of items, defaults to 5
         :param state_karts: The number of karts, defaults to 5
         """
-        super().__init__(max_paths=state_paths, **kwargs)
+        super().__init__(env, **kwargs)
         self.state_items = state_items
         self.state_karts = state_karts
         self.state_paths = state_paths
 
         # Override some keys in the observation space
-        space = self.observation_space
+        self._observation_space = space = copy.deepcopy(self.env.observation_space)
 
         space["paths_distance"] = spaces.Box(
             0, float("inf"), shape=(self.state_paths, 2), dtype=np.float32
@@ -468,9 +493,10 @@ class SimpleSTKRaceEnv(STKRaceEnv):
         ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
         state[name] = value
 
-    def observation(self):
-        state = super().observation()
-
+    def observation(self, state):
+        # Shallow copy
+        state = {**state}
+        
         # Ensures that the size of observations is constant
         self.make_tensor(state, "paths_distance")
         self.make_tensor(state, "paths_width")
@@ -488,43 +514,25 @@ class STKDiscreteAction(STKAction):
     steering: int
 
 
-class Discretizer:
-    def __init__(self, space: spaces.Box, values: int):
-        self.max_value = float(space.high)
-        self.min_value = float(space.low)
-        self.values = values
-        self.space = spaces.Discrete(values)
-
-    def discretize(self, value: float):
-        v = int(
-            (value - self.min_value)
-            * (self.values - 1)
-            / (self.max_value - self.min_value)
-        )
-        assert v >= 0, f"discretized value {v} is below 0"
-        if v >= self.values:
-            v -= 1
-        assert v <= self.values, f"discretized value {v} is above {self.values-1}"
-        return v
-
-    def continuous(self, value: int):
-        return (self.max_value - self.min_value) * value / (
-            self.values - 1
-        ) + self.min_value
-
-
-class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
+class DiscreteActionsWrapper(gym.ActionWrapper):
     # Wraps the actions
-    def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=5, **kwargs):
+        super().__init__(env, **kwargs)
 
+        self._action_space = copy.deepcopy(env.action_space)
+        
         self.d_acceleration = Discretizer(
             self.action_space["acceleration"], acceleration_steps
         )
-        self.action_space["acceleration"] = self.d_acceleration.space
-
+        self._action_space["acceleration"] = self.d_acceleration.space
+        
         self.d_steer = Discretizer(self.action_space["steer"], steer_steps)
-        self.action_space["steer"] = self.d_steer.space
+        self._action_space["steer"] = self.d_steer.space
+
+        if "action" in self.observation_space:
+            self._observation_space = copy.deepcopy(self.observation_space)
+            self._observation_space["action"]["steer"] = self.d_steer.space
+            self._observation_space["action"]["acceleration"] = self.d_acceleration.space
 
     def from_discrete(self, action):
         action = {**action}
@@ -538,32 +546,44 @@ class DiscreteActionSTKRaceEnv(SimpleSTKRaceEnv):
         action["steer"] = self.d_steer.discretize(action["steer"])
         return action
 
+
     def step(
+        self, action
+    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+        """Modifies the :attr:`env` after calling :meth:`step` using :meth:`self.observation` on the returned observations."""
+        # Transforms the action when part of the environment
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if "action" in obs:
+            obs["action"] = self.to_discrete(obs["action"])
+        return obs, reward, terminated, truncated, info
+
+    
+    def action(
         self, action: STKDiscreteAction
     ) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
-        return super().step(self.from_discrete(action))
+        return self.from_discrete(action)
 
-class OnlyContinuousActionSTKRaceEnv(SimpleSTKRaceEnv):
+class OnlyContinuousActionsWrapper(gym.ActionWrapper):
     """Removes the discrete actions"""
     
-    def __init__(self, acceleration_steps=5, steer_steps=5, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, env: gym.Env, **kwargs):
+        super().__init__(env, **kwargs)
         
         self.discrete_actions =  spaces.Dict({
-            key: value for key, value in self.action_space.items()
+            key: value for key, value in env.action_space.items()
             if isinstance(value, spaces.Discrete)
         })
 
-        self.action_space =  spaces.Dict({
-            key: value for key, value in self.action_space.items()
+        self._action_space =  spaces.Dict({
+            key: value for key, value in env.action_space.items()
             if isinstance(value, spaces.Box)
         })
 
 
-    def step(
+    def action(
         self, action: Dict
     ) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
-        return super().step({
+        return {
             **action,
-            **{key: 0 for key, value in self.discrete_actions.items()}
-        })
+            **{key: 0 for key, _ in self.discrete_actions.items()}
+        }
