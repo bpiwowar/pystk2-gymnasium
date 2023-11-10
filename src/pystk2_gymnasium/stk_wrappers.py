@@ -37,7 +37,7 @@ class ActionObservationWrapper(Wrapper[ObsType, WrapperActType, ObsType, ActType
 
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
-    ) -> Tuple[WrapperObsType, dict[str, Any]]:
+    ) -> Tuple[WrapperObsType, Dict[str, Any]]:
         """Modifies the :attr:`env` after calling :meth:`reset`, returning a
         modified observation using :meth:`self.observation`."""
         obs, info = self.env.reset(seed=seed, options=options)
