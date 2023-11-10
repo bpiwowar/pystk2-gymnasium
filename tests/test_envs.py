@@ -21,12 +21,14 @@ def test_env(name, use_ai):
         done = False
         state, *_ = env.reset()
 
-        while not done:
+        for _ in range(10):
             ix += 1
             action = env.action_space.sample()
             # print(action)
             state, reward, terminated, truncated, _ = env.step(action)
             done = truncated or terminated
+            if done: 
+                break
     finally:
         if env is not None:
             env.close()

@@ -332,13 +332,13 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             action = self.race.get_kart_action(kart_ix)
             obs = {
                 "action": {
-                    "steer": action.steer,
                     "brake": action.brake,
                     "nitro": action.nitro,
                     "drift": action.drift,
                     "rescue": action.rescue,
                     "fire": action.fire,
-                    "acceleration": action.acceleration,
+                    "steer": np.array([action.steer], dtype=np.float32),
+                    "acceleration": np.array([action.acceleration], dtype=np.float32),
                 }
             }
 
