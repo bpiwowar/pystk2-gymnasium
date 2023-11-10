@@ -93,6 +93,7 @@ class FlattenerWrapper(gym.ObservationWrapper):
         }
 
         if self.has_action:
+            # Transforms from nested action to a flattened
             obs_action = observation["action"]
             discrete = np.array(
                 [obs_action[key] for key in self.action_flattener.discrete_keys]
@@ -102,7 +103,9 @@ class FlattenerWrapper(gym.ObservationWrapper):
             else:
                 continuous = np.concatenate(
                     [
-                        obs_action[key].flatten()
+                        np.array([obs_action[key]])
+                        if isinstance(obs_action[key], float)
+                        else obs_action[key].flatten()
                         for key in self.action_flattener.continuous_keys
                     ]
                 )

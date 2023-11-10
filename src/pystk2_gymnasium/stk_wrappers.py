@@ -3,15 +3,54 @@ This module contains STK-specific wrappers
 """
 
 import copy
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
 import pystk2
 from gymnasium import spaces
+from gymnasium.core import (
+    Wrapper,
+    WrapperActType,
+    WrapperObsType,
+    ObsType,
+    ActType,
+    SupportsFloat,
+)
 
 from .envs import STKAction
 from pystk2_gymnasium.utils import Discretizer, max_enum_value
+
+
+class ActionObservationWrapper(Wrapper[ObsType, WrapperActType, ObsType, ActType]):
+    """Combines action and observation wrapper"""
+
+    def action(self, action: WrapperActType) -> ActType:
+        raise NotImplementedError
+
+    def observation(self, observation: ObsType) -> WrapperObsType:
+        raise NotImplementedError
+
+    def __init__(self, env: gym.Env[ObsType, ActType]):
+        """Constructor for the action wrapper."""
+        Wrapper.__init__(self, env)
+
+    def reset(
+        self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
+    ) -> Tuple[WrapperObsType, dict[str, Any]]:
+        """Modifies the :attr:`env` after calling :meth:`reset`, returning a
+        modified observation using :meth:`self.observation`."""
+        obs, info = self.env.reset(seed=seed, options=options)
+        return self.observation(obs), info
+
+    def step(
+        self, action: ActType
+    ) -> Tuple[WrapperObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
+        """Modifies the :attr:`env` after calling :meth:`step` using
+        :meth:`self.observation` on the returned observations."""
+        action = self.action(action)
+        observation, reward, terminated, truncated, info = self.env.step(action)
+        return self.observation(observation), reward, terminated, truncated, info
 
 
 class PolarObservations(gym.ObservationWrapper):
@@ -121,7 +160,7 @@ class STKDiscreteAction(STKAction):
     steering: int
 
 
-class DiscreteActionsWrapper(gym.ActionWrapper):
+class DiscreteActionsWrapper(ActionObservationWrapper):
     # Wraps the actions
     def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=5, **kwargs):
         super().__init__(env, **kwargs)
@@ -155,12 +194,11 @@ class DiscreteActionsWrapper(gym.ActionWrapper):
         action["steer"] = self.d_steer.discretize(action["steer"])
         return action
 
-    def step(self, action) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
-        # Transforms the action when part of the environment
-        obs, reward, terminated, truncated, info = self.env.step(action)
+    def observation(self, obs):
         if "action" in obs:
+            obs = {**obs}
             obs["action"] = self.to_discrete(obs["action"])
-        return obs, reward, terminated, truncated, info
+        return obs
 
     def action(
         self, action: STKDiscreteAction
@@ -168,7 +206,7 @@ class DiscreteActionsWrapper(gym.ActionWrapper):
         return self.from_discrete(action)
 
 
-class OnlyContinuousActionsWrapper(gym.ActionWrapper):
+class OnlyContinuousActionsWrapper(ActionObservationWrapper):
     """Removes the discrete actions"""
 
     def __init__(self, env: gym.Env, **kwargs):
@@ -189,6 +227,14 @@ class OnlyContinuousActionsWrapper(gym.ActionWrapper):
                 if isinstance(value, spaces.Box)
             }
         )
+
+    def observation(self, obs):
+        if "action" in obs:
+            obs = {**obs}
+            obs["action"] = {
+                key: obs["action"][key] for key in self.action_space.keys()
+            }
+        return obs
 
     def action(self, action: Dict) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         return {**action, **{key: 0 for key, _ in self.discrete_actions.items()}}
