@@ -473,6 +473,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
 
         # Setup the variables
         self.agents = agents
+        assert len(self.agents) <= self.num_kart, f"Too many agents ({len(self.agents)}) for {self.num_kart} karts"
 
         # Kart index for each agent (set when the race is setup)
         self.kart_indices = None
