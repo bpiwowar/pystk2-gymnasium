@@ -1,7 +1,7 @@
 """
 This module contains generic wrappers
 """
-from typing import Any, Callable, Dict, SupportsFloat
+from typing import Any, Callable, Dict, SupportsFloat, Tuple
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -193,7 +193,7 @@ class MultiMonoEnv(gym.Env):
 
     def step(
         self, action: Any
-    ) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
+    ) -> Tuple[Any, SupportsFloat, bool, bool, Dict[str, Any]]:
         raise RuntimeError("Should not be called - fake mono environment")
 
 
