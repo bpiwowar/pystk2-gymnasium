@@ -3,54 +3,16 @@ This module contains STK-specific wrappers
 """
 
 import copy
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import gymnasium as gym
 import numpy as np
 import pystk2
 from gymnasium import spaces
-from gymnasium.core import (
-    Wrapper,
-    WrapperActType,
-    WrapperObsType,
-    ObsType,
-    ActType,
-    SupportsFloat,
-)
 
 from .envs import STKAction
+from .definitions import ActionObservationWrapper
 from pystk2_gymnasium.utils import Discretizer, max_enum_value
-
-
-class ActionObservationWrapper(Wrapper[ObsType, WrapperActType, ObsType, ActType]):
-    """Combines action and observation wrapper"""
-
-    def action(self, action: WrapperActType) -> ActType:
-        raise NotImplementedError
-
-    def observation(self, observation: ObsType) -> WrapperObsType:
-        raise NotImplementedError
-
-    def __init__(self, env: gym.Env[ObsType, ActType]):
-        """Constructor for the action wrapper."""
-        Wrapper.__init__(self, env)
-
-    def reset(
-        self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
-    ) -> Tuple[WrapperObsType, Dict[str, Any]]:
-        """Modifies the :attr:`env` after calling :meth:`reset`, returning a
-        modified observation using :meth:`self.observation`."""
-        obs, info = self.env.reset(seed=seed, options=options)
-        return self.observation(obs), info
-
-    def step(
-        self, action: ActType
-    ) -> Tuple[WrapperObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
-        """Modifies the :attr:`env` after calling :meth:`step` using
-        :meth:`self.observation` on the returned observations."""
-        action = self.action(action)
-        observation, reward, terminated, truncated, info = self.env.step(action)
-        return self.observation(observation), reward, terminated, truncated, info
 
 
 class PolarObservations(gym.ObservationWrapper):

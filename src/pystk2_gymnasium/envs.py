@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-from itertools import repeat
 import logging
 import functools
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, TypedDict
@@ -9,13 +7,10 @@ import numpy as np
 import pystk2
 from gymnasium import spaces
 
-from pystk2_gymnasium.utils import max_enum_value, rotate
+from .utils import max_enum_value, rotate
+from .definitions import AgentSpec
 
 logger = logging.getLogger("pystk2-gym")
-
-
-float3D = Tuple[float, float, float]
-float4D = Tuple[float, float, float, float]
 
 
 @functools.lru_cache
@@ -58,6 +53,9 @@ def kart_observation_space(use_ai: bool):
             ),
             "max_steer_angle": spaces.Box(-1, 1, dtype=np.float32, shape=(1,)),
             "distance_down_track": spaces.Box(0.0, float("inf")),
+            "distance_center_path": spaces.Box(
+                0, float("inf"), dtype=np.float32, shape=(1,)
+            ),
             "front": spaces.Box(
                 -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
             ),
@@ -120,12 +118,6 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 
     #: List of available tracks
     TRACKS: ClassVar[List[str]] = []
-
-    #: Rank of the observed kart (random if None)
-    rank_start: Optional[int]
-
-    #: Use AI
-    use_ai: bool
 
     @staticmethod
     def initialize(with_graphics: bool):
@@ -326,6 +318,15 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         items_type = [item.type.value for item in self.world.items]
         sort_closest(items_position, items_type)
 
+        # Distance from center of track
+        start, end = kartview(self.track.path_nodes[path_ix][0]), kartview(
+            self.track.path_nodes[path_ix][1]
+        )
+        s_e = start - end
+        distance_center_path = np.linalg.norm(
+            start - np.dot(s_e, start) * s_e / np.linalg.norm(s_e)
+        )
+
         # Add action if using AI bot
         obs = {}
         if use_ai:
@@ -359,6 +360,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             "distance_down_track": np.array(
                 [kart.distance_down_track], dtype=np.float32
             ),
+            "distance_center_path": np.array([distance_center_path], dtype=np.float32),
             "velocity": kart.velocity_lc,
             "front": kartview(kart.front),
             # Items (kart point of view)
@@ -385,27 +387,26 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 class STKRaceEnv(BaseSTKRaceEnv):
     """Single player race environment"""
 
-    def __init__(self, *, rank_start=None, use_ai=False, **kwargs):
+    #: Use AI
+    spec: AgentSpec
+
+    def __init__(self, *, agent: Optional[AgentSpec] = None, **kwargs):
         """Creates a new race
 
-        :param use_ai: Use STK built         AI bot instead of the agent action
-        :param rank_start: The position of the controlled kart, defaults to None
-            for random, 0 to num_kart-1 assigns a rank, all the other values
-            discard the controlled kart.
+        :param spec: Agent spec
         :param kwargs: General parameters, see BaseSTKRaceEnv
         """
         super().__init__(**kwargs)
 
         # Setup the variables
-        self.rank_start = rank_start
-        self.use_ai = use_ai
+        self.agent = agent if agent is not None else AgentSpec()
 
         # Those will be set when the race is setup
         self.kart_ix = None
 
         # We have 4 actions, corresponding to "right", "up", "left", "down"
         self.action_space = kart_action_space()
-        self.observation_space = kart_observation_space(self.use_ai)
+        self.observation_space = kart_observation_space(self.agent.use_ai)
 
     def reset(
         self,
@@ -418,16 +419,18 @@ class STKRaceEnv(BaseSTKRaceEnv):
         super().reset_race(random, options=options)
 
         # Set the controlled kart position (if any)
-        self.kart_ix = self.rank_start
+        self.kart_ix = self.agent.rank_start
         if self.kart_ix is None:
             self.kart_ix = np.random.randint(0, self.num_kart)
         logging.debug("Observed kart index %d", self.kart_ix)
 
-        if self.use_ai:
-            self.config.players[
-                self.kart_ix
-            ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
-        else:
+        # Camera setup
+        self.config.players[
+            self.kart_ix
+        ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
+        self.config.players[self.kart_ix].name = self.agent.name
+
+        if not self.agent.use_ai:
             self.config.players[
                 self.kart_ix
             ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
@@ -435,27 +438,21 @@ class STKRaceEnv(BaseSTKRaceEnv):
         self.warmup_race()
         self.world.update()
 
-        return self.get_observation(self.kart_ix, self.use_ai), {}
+        return self.get_observation(self.kart_ix, self.agent.use_ai), {}
 
     def step(
         self, action: STKAction
     ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
-        if self.use_ai:
+        if self.agent.use_ai:
             self.race.step()
         else:
             self.race.step(get_action(action))
 
         self.world_update()
 
-        obs, reward, terminated, info = self.get_state(self.kart_ix, self.use_ai)
+        obs, reward, terminated, info = self.get_state(self.kart_ix, self.agent.use_ai)
 
         return (obs, reward, terminated, False, info)
-
-
-@dataclass
-class AgentSpec:
-    rank_start: Optional[int] = None
-    use_ai: bool = False
 
 
 class STKRaceMultiEnv(BaseSTKRaceEnv):
@@ -473,7 +470,9 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
 
         # Setup the variables
         self.agents = agents
-        assert len(self.agents) <= self.num_kart, f"Too many agents ({len(self.agents)}) for {self.num_kart} karts"
+        assert (
+            len(self.agents) <= self.num_kart
+        ), f"Too many agents ({len(self.agents)}) for {self.num_kart} karts"
 
         # Kart index for each agent (set when the race is setup)
         self.kart_indices = None
@@ -491,9 +490,14 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
             ix for ix in range(self.num_kart) if ix not in ranked_agents
         ]
 
-        self.action_space = spaces.Tuple(repeat(kart_action_space(), len(self.agents)))
-        self.observation_space = spaces.Tuple(
-            kart_observation_space(agent.use_ai) for agent in self.agents
+        self.action_space = spaces.Dict(
+            {str(ix): kart_action_space() for ix in range(len(self.agents))}
+        )
+        self.observation_space = spaces.Dict(
+            {
+                str(ix): kart_observation_space(agent.use_ai)
+                for ix, agent in enumerate(self.agents)
+            }
         )
 
     def reset(
@@ -514,11 +518,12 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         for agent in self.agents:
             kart_ix = agent.rank_start or next(pos_iter)
             self.kart_indices.append(kart_ix)
-            self.config.players[kart_ix].camera_mode = pystk2.PlayerConfig.CameraMode.ON
+            self.config.players[kart_ix].camera_mode = agent.camera_mode
             if not agent.use_ai:
                 self.config.players[
                     kart_ix
                 ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+            self.config.players[kart_ix].name = agent.name
 
         logging.debug("Observed kart indices %s", self.kart_indices)
 
@@ -526,22 +531,24 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         self.world.update()
 
         return (
-            tuple(
-                self.get_observation(ix, agent.use_ai)
-                for agent, ix in zip(self.agents, self.kart_indices)
-            ),
+            {
+                str(agent_ix): self.get_observation(kart_ix, agent.use_ai)
+                for agent_ix, (agent, kart_ix) in enumerate(
+                    zip(self.agents, self.kart_indices)
+                )
+            },
             {},
         )
 
     def step(
-        self, actions: Tuple[STKAction]
+        self, actions: Dict[str, STKAction]
     ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
         # Performs the action
         assert len(actions) == len(self.agents)
         self.race.step(
             [
-                get_action(action)
-                for agent, action in zip(self.agents, actions)
+                get_action(actions[str(agent_ix)])
+                for agent_ix, agent in enumerate(self.agents)
                 if not agent.use_ai
             ]
         )
@@ -549,27 +556,36 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         # Update the world state
         self.world_update()
 
-        observations = []
-        rewards = []
-        infos = []
+        observations = {}
+        rewards = {}
+        infos = {}
+        multi_terminated = {}
+        multi_done = {}
         terminated_count = 0
-        for agent, kart_ix in zip(self.agents, self.kart_indices):
+        for agent_ix, (agent, kart_ix) in enumerate(
+            zip(self.agents, self.kart_indices)
+        ):
             obs, reward, terminated, info = self.get_state(kart_ix, agent.use_ai)
-            observations.append(obs)
-            rewards.append(reward)
+            key = str(agent_ix)
+
+            observations[key] = obs
+            rewards[key] = reward
+            multi_terminated[key] = terminated
+            infos[key] = info
+
             if terminated:
                 terminated_count += 1
-            infos.append(info)
 
         return (
-            tuple(observations),
-            # Only scalar rewards can be given
-            np.sum(rewards),
+            observations,
+            # Only scalar rewards can be given: we sum them all
+            np.sum(list(rewards.values())),
             terminated_count == len(self.agents),
             False,
             {
                 "infos": infos,
-                # We put back individual rewards
-                "rewards": rewards,
+                "done": multi_done,
+                "terminated": multi_terminated,
+                "reward": rewards,
             },
         )

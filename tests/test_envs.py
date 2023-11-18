@@ -13,7 +13,7 @@ def test_env(name, use_ai):
     if name.startswith("supertuxkart/multi-"):
         kwargs = {"agents": [AgentSpec(use_ai=use_ai), AgentSpec(use_ai=use_ai)]}
     else:
-        kwargs = {"use_ai": use_ai}
+        kwargs = {"agent": AgentSpec(use_ai=use_ai)}
     try:
         env = gym.make(name, render_mode=None, **kwargs)
 
@@ -27,7 +27,7 @@ def test_env(name, use_ai):
             # print(action)
             state, reward, terminated, truncated, _ = env.step(action)
             done = truncated or terminated
-            if done: 
+            if done:
                 break
     finally:
         if env is not None:

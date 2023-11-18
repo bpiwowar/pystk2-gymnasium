@@ -1,6 +1,8 @@
 # PySuperTuxKart gymnasium wrapper
 
-*warning*: pystk2-gymnasium is in alpha stage - the environments might change abruptly!
+[![PyPI version](https://badge.fury.io/py/pystk2-gymnasium.svg)](https://badge.fury.io/py/pystk2-gymnasium)
+
+Read the [Changelog](./CHANGELOG.md)
 
 ## Install
 
@@ -10,7 +12,18 @@ The PySuperKart2 gymnasium wrapper is a Python package, so installing is fairly 
 
 Note that during the first run, SuperTuxKart assets are downloaded in the cache directory.
 
+## AgentSpec
+
+Each controlled kart is parametrized by `pystk2_gymnasium.AgentSpec`:
+
+- `name` defines name of the player (displayed on top of the kart)
+- `rank_start` defines the starting position (None for random, which is the default)
+- `use_ai` flag (False by default) to ignore actions (when calling `step`, and use a SuperTuxKart bot)
+- `camera_mode` can be set to `AUTO` (camera on for non STK bots), `ON` (camera on) or `OFF` (no camera).
+
+
 ## Environments
+
 
 *Warning* only one SuperTuxKart environment can be created for now. Moreover, no graphics information
 is available for now.
@@ -18,11 +31,10 @@ is available for now.
 After importing `pystk2_gymnasium`, the following environments are available:
 
 - `supertuxkart/full-v0` is the main environment containing complete observations. The observation and action spaces are both dictionaries with continuous or discrete variables (see below). The exact structure can be found using `env.observation_space` and `env.action_space`. The following options can be used to modify the environment:
+    - `agent` is an `AgentSpec (see above)`
     - `render_mode` can be None or `human`
     - `track` defines the SuperTuxKart track to use (None for random). The full list can be found in `STKRaceEnv.TRACKS` after initialization with `initialize.initialize(with_graphics: bool)` has been called.
     - `num_kart` defines the number of karts on the track (3 by default)
-    - `rank_start` defines the starting position (None for random, which is the default)
-    - `use_ai` flag (False by default) to ignore actions (when calling `step`, and use a SuperTuxKart bot)
     - `max_paths` the maximum number of the (nearest) paths (a track is made of paths) to consider in the observation state
     - `laps` is the number of laps (1 by default)
     - `difficulty` is the difficulty of the AI bots (lowest 0 to highest 2, default to 2)
@@ -39,6 +51,13 @@ $$ r_{t} =  \frac{1}{10}(d_{t} - d_{t-1}) + (1 - \frac{\mathrm{pos}_t}{K}) \time
 where $d_t$ is the
 overall track distance at time $t$, $\mathrm{pos}_t$ the position among the $K$ karts at time $t$, and $f_t$ is $1$ when the kart finishes the race.
 
+## Multi-agent environment
+
+`supertuxkart/multi-full-v0` can be used to control multiple karts. It takes an
+`agents` parameter that is a list of `AgentSpec`. Observations and actions are a dictionary of single-kart ones where **string** keys that range from `0` to `n-1` with `n` the number of karts.
+
+To use different gymnasium wrappers, one can use a `MonoAgentWrapperAdapter`.
+
 ## Action and observation space
 
 All the 3D vectors are within the kart referential (`z` front, `x` left, `y` up):
@@ -53,6 +72,7 @@ All the 3D vectors are within the kart referential (`z` front, `x` left, `y` up)
 - `jumping`: is the kart jumping
 - `karts_position`: position of other karts, beginning with the ones in front
 - `max_steer_angle` the max angle of the steering (given the current speed)
+- `distance_center_path`: distance to the center of the path
 - `paths_distance`: the distance of the paths
 - `paths_start`, `paths_end`, `paths_width`: 3D vector to the paths start and end, with their widths (sccalar)
 - `paths_start`: 3D vectors to the the path s
@@ -65,13 +85,13 @@ All the 3D vectors are within the kart referential (`z` front, `x` left, `y` up)
 
 ```py3
 import gymnasium as gym
-import pystk2_gymnasium
+from pystk2_gymnasium import AgentSpec
 
 # Use a a flattened version of the observation and action spaces
 # In both case, this corresponds to a dictionary with two keys:
 # - `continuous` is a vector corresponding to the continuous observations
 # - `discrete` is a vector (of integers) corresponding to discrete observations
-env = gym.make("supertuxkart/flattened-v0", render_mode="human", use_ai=False)
+env = gym.make("supertuxkart/flattened-v0", render_mode="human", agent=AgentSpec(use_ai=False))
 
 ix = 0
 done = False

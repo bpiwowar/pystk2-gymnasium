@@ -5,13 +5,14 @@ description = "Gymnasium wrapper for PySTK2"
 authors = ["Benjamin Piwowarski <benjamin@piwowarski.fr>"]
 license = "GPL"
 readme = "README.md"
-
 homepage = "https://github.com/bpiwowar/pystk2-gymnasium"
 repository = "https://github.com/bpiwowar/pystk2-gymnasium"
 
+include = ["CHANGELOG.md"]
+
 [tool.poetry.dependencies]
 python = "^3.8"
-PySuperTuxKart2 = "=0.3.4"
+PySuperTuxKart2 = ">=0.3.5"
 gymnasium = ">0.29.0"
 
 [build-system]

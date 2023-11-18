@@ -1,12 +1,21 @@
 """
 This module contains generic wrappers
 """
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, SupportsFloat
 
 import gymnasium as gym
-import numpy as np
 from gymnasium import spaces
-from gymnasium.core import Env
+from gymnasium.core import (
+    Wrapper,
+    WrapperActType,
+    WrapperObsType,
+    ObsType,
+    ActType,
+    Env,
+)
+import numpy as np
+
+from pystk2_gymnasium.definitions import ActionObservationWrapper
 
 
 class SpaceFlattener:
@@ -64,7 +73,7 @@ class SpaceFlattener:
             )
 
 
-class FlattenerWrapper(gym.ObservationWrapper):
+class FlattenerWrapper(ActionObservationWrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
 
@@ -114,9 +123,6 @@ class FlattenerWrapper(gym.ObservationWrapper):
                 new_obs["action"] = {"discrete": discrete, "continuous": continuous}
 
         return new_obs
-
-    def step(self, action) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
-        return super().step(self.action(action))
 
     def action(self, action):
         discrete_actions = {}
@@ -172,3 +178,113 @@ class FlattenMultiDiscreteActions(gym.ActionWrapper):
             actions.append(action % n)
             action = action // n
         return actions
+
+
+class MultiMonoEnv(gym.Env):
+    """Fake mono-kart environment for mono-kart wrappers"""
+
+    def __init__(self, env: gym.Env, key: str):
+        self._env = env
+        self.observation_space = env.observation_space[key]
+        self.action_space = env.action_space[key]
+
+    def reset(self, **kwargs):
+        raise RuntimeError("Should not be called - fake mono environment")
+
+    def step(
+        self, action: Any
+    ) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
+        raise RuntimeError("Should not be called - fake mono environment")
+
+
+class MonoAgentWrapperAdapter(ActionObservationWrapper):
+    """Adapts a mono agent wrapper for a multi-agent one"""
+
+    def __init__(
+        self,
+        env: gym.Env,
+        *,
+        wrapper_factories: Dict[str, Callable[[gym.Env], Wrapper]],
+    ):
+        """Initialize an adapter that use distinct wrappers
+
+        It supposes that the space/action space is a dictionary where each key
+        corresponds to a different agent.
+
+        :param env: The base environment
+        :param wrapper_factories: Return a wrapper for every key in the
+            observation/action spaces dictionary. Supported wrappers are
+            `ActionObservationWrapper`, `ObservationWrapper`, and `ActionWrapper`.
+        """
+        super().__init__(env)
+
+        # Perform some checks
+        self.keys = set(self.action_space.keys())
+        assert self.keys == set(
+            self.observation_space.keys()
+        ), "Observation and action keys differ"
+
+        # Setup the wrapped environment
+        self.mono_envs = {}
+        self.wrappers = {}
+
+        for key in env.observation_space.keys():
+            mono_env = MultiMonoEnv(env, key)
+            self.mono_envs[key] = mono_env
+            wrapper = wrapper_factories[key](mono_env)
+
+            # Build up the list of action/observation wrappers
+            self.wrappers[key] = wrappers = []
+            while wrapper is not mono_env:
+                assert isinstance(
+                    wrapper,
+                    (
+                        gym.ObservationWrapper,
+                        gym.ActionWrapper,
+                        ActionObservationWrapper,
+                    ),
+                ), f"{type(wrapper)} is not an action/observation wrapper"
+                wrappers.append(wrapper)
+                wrapper = wrapper.env
+
+        # Change the observation space
+        self._action_space = spaces.Dict(
+            {
+                key: self.wrappers[key][0].action_space
+                if len(self.wrappers[key]) > 0
+                else self.mono_envs[key].action_space
+                for key in self.keys
+            }
+        )
+        self._observation_space = spaces.Dict(
+            {
+                key: self.wrappers[key][0].observation_space
+                if len(self.wrappers[key]) > 0
+                else self.mono_envs[key].observation_space
+                for key in self.keys
+            }
+        )
+
+    def action(self, actions: WrapperActType) -> ActType:
+        new_action = {}
+        for key in self.keys:
+            action = actions[key]
+            for wrapper in self.wrappers[key]:
+                if isinstance(wrapper, (gym.ActionWrapper, ActionObservationWrapper)):
+                    action = wrapper.action(action)
+            new_action[key] = action
+
+        return new_action
+
+    def observation(self, observations: ObsType) -> WrapperObsType:
+        new_observation = {}
+        for key in self.keys:
+            observation = observations[key]
+            for wrapper in reversed(self.wrappers[key]):
+                if isinstance(
+                    wrapper, (gym.ObservationWrapper, ActionObservationWrapper)
+                ):
+                    observation = wrapper.observation(observation)
+            new_observation[key] = observation
+
+        return new_observation
