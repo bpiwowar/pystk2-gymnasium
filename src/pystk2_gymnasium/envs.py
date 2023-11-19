@@ -324,7 +324,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         )
         s_e = start - end
         distance_center_path = np.linalg.norm(
-            start - np.dot(s_e, start) * s_e / np.linalg.norm(s_e)
+            start - np.dot(s_e, start) * s_e / np.linalg.norm(s_e) ** 2
         )
 
         # Add action if using AI bot

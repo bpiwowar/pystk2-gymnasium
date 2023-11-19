@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pystk2-gymnasium"
-version = "0.4.0"
+version = "0.0.0"
 description = "Gymnasium wrapper for PySTK2"
 authors = ["Benjamin Piwowarski <benjamin@piwowarski.fr>"]
 license = "GPL"
@@ -10,11 +10,18 @@ repository = "https://github.com/bpiwowar/pystk2-gymnasium"
 
 include = ["CHANGELOG.md"]
 
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
+
+[tool.poetry-dynamic-versioning]
+enable = true
+vcs = "git"
+style = "semver"
+dirty = true
+format-jinja = "{% if distance == 0 %}{{ base }}{% else %}{{ base }}+{{ distance }}.{{ commit }}{% if dirty %}.dirty{% endif %}{% endif %}"
+
 [tool.poetry.dependencies]
 python = "^3.8"
-PySuperTuxKart2 = ">=0.3.5"
+PySuperTuxKart2 = ">=0.3.7"
 gymnasium = ">0.29.0"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"

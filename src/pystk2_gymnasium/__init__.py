@@ -2,6 +2,10 @@ from gymnasium.envs.registration import register, WrapperSpec
 from .definitions import ActionObservationWrapper, AgentSpec  # noqa: F401
 from .wrappers import MonoAgentWrapperAdapter  # noqa: F401
 
+# Version is setup automatically
+__version__ = "0.0.0"
+__version_tuple__ = (0, 0, 0)
+
 register(
     id="supertuxkart/full-v0",
     entry_point="pystk2_gymnasium.envs:STKRaceEnv",

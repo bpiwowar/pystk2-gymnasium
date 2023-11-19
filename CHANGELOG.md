@@ -1,3 +1,7 @@
+# Version 0.4.2
+
+- Fix in formula for `distance_center_path`
+
 # Version 0.4.0
 
 - Multi-agent environment
