@@ -31,7 +31,8 @@ class SpaceFlattener:
         highs = []
         counts = []
 
-        for key, value in space.items():
+        # Combine keys (sort them before hand)
+        for key, value in sorted(space.items(), key=lambda x: x[0]):
             # Ignore the AI action
             if key == "action":
                 continue

@@ -188,7 +188,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         self.current_track = self.default_track
         if self.current_track is None:
             self.current_track = self.TRACKS[random.randint(0, len(self.TRACKS))]
-            logging.info("Selected %s", self.current_track)
+            logging.debug("Selected %s", self.current_track)
         self.config = pystk2.RaceConfig(
             num_kart=self.num_kart,
             seed=random.randint(2**16),
