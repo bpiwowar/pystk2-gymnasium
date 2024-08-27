@@ -1,6 +1,8 @@
+import gymnasium
 import numpy as np
+import numpy.testing
 import pystk2
-from pystk2_gymnasium.utils import rotate
+from pystk2_gymnasium.utils import Discretizer, rotate
 from pystk2_gymnasium.envs import STKRaceEnv
 
 
@@ -22,3 +24,17 @@ def test_rotation():
         if race is not None:
             race.stop()
             del race
+
+
+def test_discretizer():
+    k = 5
+
+    discretizer = Discretizer(gymnasium.spaces.Box(-1, 1, shape=(1,)), k)
+    step = 2.0 / (k - 1)
+
+    for j in range(k):
+        assert discretizer.discretize(discretizer.continuous(j)) == j, f"For index {j}"
+
+    for x in np.arange(-1, 1, step):
+        xhat = discretizer.continuous(discretizer.discretize(x))
+        assert np.abs(xhat - x) < step, f"For value {x} vs {xhat}"

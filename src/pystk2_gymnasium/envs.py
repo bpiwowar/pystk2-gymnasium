@@ -293,6 +293,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             list[:] = (list[ix] for ix in sort_ix)
 
         def sort_closest(positions, *lists):
+            # z axis is front
             distances = [np.linalg.norm(p) * np.sign(p[2]) for p in positions]
 
             # Change distances: if d < 0, d <- -d+max_d+1
@@ -328,18 +329,20 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         )
 
         # Add action if using AI bot
+        # (this corresponds to the action before the observation)
         obs = {}
         if use_ai:
+            # Adds actions
             action = self.race.get_kart_action(kart_ix)
             obs = {
                 "action": {
-                    "brake": action.brake,
-                    "nitro": action.nitro,
-                    "drift": action.drift,
-                    "rescue": action.rescue,
-                    "fire": action.fire,
-                    "steer": np.array([action.steer], dtype=np.float32),
                     "acceleration": np.array([action.acceleration], dtype=np.float32),
+                    "brake": action.brake,
+                    "drift": action.drift,
+                    "fire": action.fire,
+                    "nitro": action.nitro,
+                    "rescue": action.rescue,
+                    "steer": np.array([action.steer], dtype=np.float32),
                 }
             }
 

@@ -124,7 +124,7 @@ class STKDiscreteAction(STKAction):
 
 class DiscreteActionsWrapper(ActionObservationWrapper):
     # Wraps the actions
-    def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=5, **kwargs):
+    def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=10, **kwargs):
         super().__init__(env, **kwargs)
 
         self._action_space = copy.deepcopy(env.action_space)
@@ -138,6 +138,7 @@ class DiscreteActionsWrapper(ActionObservationWrapper):
         self._action_space["steer"] = self.d_steer.space
 
         if "action" in self.observation_space:
+            # When using AI, "action" is part of the observation space
             self._observation_space = copy.deepcopy(self.observation_space)
             self._observation_space["action"]["steer"] = self.d_steer.space
             self._observation_space["action"][

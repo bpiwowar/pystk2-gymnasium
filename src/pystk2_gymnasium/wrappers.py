@@ -19,6 +19,13 @@ from pystk2_gymnasium.definitions import ActionObservationWrapper
 
 
 class SpaceFlattener:
+    """Flattens an observation or action space
+
+    If the space has discrete and continuous values, returns
+    a dictionary with "continuous" and "discrete" keys – each associated with
+    a flattened observation or action. Otherwise, returns the flattened space itself.
+    """
+
     def __init__(self, space: gym.Space):
         # Flatten the observation space
         self.continuous_keys = []
@@ -31,7 +38,7 @@ class SpaceFlattener:
         highs = []
         counts = []
 
-        # Combine keys (sort them before hand)
+        # Combine keys (sort them beforehand so we always have the same order)
         for key, value in sorted(space.items(), key=lambda x: x[0]):
             # Ignore the AI action
             if key == "action":
@@ -75,6 +82,8 @@ class SpaceFlattener:
 
 
 class FlattenerWrapper(ActionObservationWrapper):
+    """Flattens actions and observations."""
+
     def __init__(self, env: gym.Env):
         super().__init__(env)
 
