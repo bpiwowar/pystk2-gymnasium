@@ -22,8 +22,10 @@ class PolarObservations(gym.ObservationWrapper):
     output: (angle in the ZX plane, angle in the ZY plane, distance)
     """
 
-    #: Keys to transform
+    #: Keys to transform (batch)
     KEYS = ["items_position", "karts_position", "paths_start", "paths_end"]
+    #: Keys to transform (single)
+    SIMPLE_KEYS = ["center_path"]
 
     def __init__(self, env: gym.Env, **kwargs):
         super().__init__(env, **kwargs)
@@ -31,6 +33,13 @@ class PolarObservations(gym.ObservationWrapper):
     def observation(self, obs):
         # Shallow copy
         obs = {**obs}
+
+        for key in PolarObservations.SIMPLE_KEYS:
+            v = obs[key]
+            distance = np.linalg.norm(v, axis=None)
+            angle_zx = np.arctan2(v[0], v[2])
+            angle_zy = np.arctan2(v[1], v[2])
+            v[:] = angle_zx, angle_zy, distance
 
         for key in PolarObservations.KEYS:
             v = obs[key]

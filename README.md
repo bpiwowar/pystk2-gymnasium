@@ -142,19 +142,20 @@ up):
 - `distance_down_track`: The distance from the start
 - `energy`: remaining collected energy
 - `front`: front of the kart (3D vector)
-- `items_position`: position of the items (3D vectors)
 - `attachment`: the item attached to the kart (bonus box, banana, nitro/big,
   nitro/small, bubble gum, easter egg)
 - `attachment_time_left`: how much time the attachment will be kept
+- `items_position`: position of the items (3D vectors)
 - `items_type`: type of the item
 - `jumping`: is the kart jumping
 - `karts_position`: position of other karts, beginning with the ones in front
 - `max_steer_angle` the max angle of the steering (given the current speed)
-- `distance_center_path`: distance to the center of the path
-- `paths_distance`: the distance of the paths
+- `center_path_distance`: distance to the center of the path
+- `center_path`: vector to the center of the path
 - `paths_start`, `paths_end`, `paths_width`: 3D vectors to the paths start and
   end, and vector of their widths (scalar). The paths are sorted so that the
   first element of the array is the current one.
+- `paths_distance`: the distance of the paths starts and ends (vector of dimension 2)
 - `powerup`: collected power-up
 - `shield_time`
 - `skeed_factor`

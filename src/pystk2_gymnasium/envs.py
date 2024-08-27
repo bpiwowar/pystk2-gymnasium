@@ -52,9 +52,12 @@ def kart_observation_space(use_ai: bool):
                 float("-inf"), float("inf"), dtype=np.float32, shape=(3,)
             ),
             "max_steer_angle": spaces.Box(-1, 1, dtype=np.float32, shape=(1,)),
-            "distance_down_track": spaces.Box(0.0, float("inf")),
-            "distance_center_path": spaces.Box(
-                0, float("inf"), dtype=np.float32, shape=(1,)
+            "distance_down_track": spaces.Box(-float("inf"), float("inf")),
+            "center_path_distance": spaces.Box(
+                float("-inf"), float("inf"), dtype=np.float32, shape=(1,)
+            ),
+            "center_path": spaces.Box(
+                -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
             ),
             "front": spaces.Box(
                 -float("inf"), float("inf"), dtype=np.float32, shape=(3,)
@@ -323,10 +326,11 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         start, end = kartview(self.track.path_nodes[path_ix][0]), kartview(
             self.track.path_nodes[path_ix][1]
         )
+
         s_e = start - end
-        distance_center_path = np.linalg.norm(
-            start - np.dot(s_e, start) * s_e / np.linalg.norm(s_e) ** 2
-        )
+        x_orth = np.dot(s_e, start) * s_e / np.linalg.norm(s_e) ** 2 - start
+
+        center_path_distance = np.linalg.norm(x_orth) * np.sign(x_orth[0])
 
         # Add action if using AI bot
         # (this corresponds to the action before the observation)
@@ -363,9 +367,11 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             "distance_down_track": np.array(
                 [kart.distance_down_track], dtype=np.float32
             ),
-            "distance_center_path": np.array([distance_center_path], dtype=np.float32),
             "velocity": kart.velocity_lc,
             "front": kartview(kart.front),
+            # path center
+            "center_path_distance": np.array([center_path_distance], dtype=np.float32),
+            "center_path": np.array(x_orth),
             # Items (kart point of view)
             "items_position": tuple(items_position),
             "items_type": tuple(items_type),
