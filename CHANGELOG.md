@@ -1,3 +1,8 @@
+# Version 0.5.0
+
+- Changed default for steer discretization steps (7)
+- (breaking) Use multi-discrete for item types
+
 # Version 0.4.5
 
 - `center_path_distance` is now relative (to indicate left/right of the path)

@@ -1,7 +1,7 @@
 """
 This module contains generic wrappers
 """
-from typing import Any, Callable, Dict, SupportsFloat, Tuple
+from typing import Any, Callable, Dict, List, SupportsFloat, Tuple
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -30,7 +30,7 @@ class SpaceFlattener:
         # Flatten the observation space
         self.continuous_keys = []
         self.shapes = []
-        self.discrete_keys = []
+        self.discrete_keys: List[str] = []
         self.indices = [0]
 
         continuous_size = 0
@@ -47,6 +47,10 @@ class SpaceFlattener:
             if isinstance(value, spaces.Discrete):
                 self.discrete_keys.append(key)
                 counts.append(value.n)
+            elif isinstance(value, spaces.MultiDiscrete):
+                self.discrete_keys.append(key)
+                for n in value.nvec:
+                    counts.append(n)
             elif isinstance(value, spaces.Box):
                 self.continuous_keys.append(key)
                 self.shapes.append(value.shape)
@@ -80,6 +84,17 @@ class SpaceFlattener:
                 }
             )
 
+    def discrete(self, observation):
+        """Concatenates discrete and multi-discrete keys"""
+        r = []
+        for key in self.discrete_keys:
+            value = observation[key]
+            if isinstance(value, int):
+                r.append(value)
+            else:
+                r.extend(value)
+        return r
+
 
 class FlattenerWrapper(ActionObservationWrapper):
     """Flattens actions and observations."""
@@ -100,9 +115,7 @@ class FlattenerWrapper(ActionObservationWrapper):
 
     def observation(self, observation):
         new_obs = {
-            "discrete": np.array(
-                [observation[key] for key in self.observation_flattener.discrete_keys]
-            ),
+            "discrete": np.array(self.observation_flattener.discrete(observation)),
             "continuous": np.concatenate(
                 [
                     observation[key].flatten()
@@ -114,9 +127,7 @@ class FlattenerWrapper(ActionObservationWrapper):
         if self.has_action:
             # Transforms from nested action to a flattened
             obs_action = observation["action"]
-            discrete = np.array(
-                [obs_action[key] for key in self.action_flattener.discrete_keys]
-            )
+            discrete = np.array(self.action_flattener.discrete(obs_action))
             if self.action_flattener.only_discrete:
                 new_obs["action"] = discrete
             else:
@@ -214,6 +225,7 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
         self,
         env: gym.Env,
         *,
+        keep_original=False,
         wrapper_factories: Dict[str, Callable[[gym.Env], Wrapper]],
     ):
         """Initialize an adapter that use distinct wrappers
@@ -222,6 +234,7 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
         corresponds to a different agent.
 
         :param env: The base environment
+        :param keep_original: Keep original space
         :param wrapper_factories: Return a wrapper for every key in the
             observation/action spaces dictionary. Supported wrappers are
             `ActionObservationWrapper`, `ObservationWrapper`, and `ActionWrapper`.
@@ -257,23 +270,28 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
                 wrappers.append(wrapper)
                 wrapper = wrapper.env
 
-        # Change the observation space
-        self._action_space = spaces.Dict(
-            {
-                key: self.wrappers[key][0].action_space
-                if len(self.wrappers[key]) > 0
-                else self.mono_envs[key].action_space
-                for key in self.keys
-            }
-        )
-        self._observation_space = spaces.Dict(
-            {
-                key: self.wrappers[key][0].observation_space
-                if len(self.wrappers[key]) > 0
-                else self.mono_envs[key].observation_space
-                for key in self.keys
-            }
-        )
+        # Change the action/observation space
+        observation_space = {
+            key: self.wrappers[key][0].observation_space
+            if len(self.wrappers[key]) > 0
+            else self.mono_envs[key].observation_space
+            for key in self.keys
+        }
+        action_space = {
+            key: self.wrappers[key][0].action_space
+            if len(self.wrappers[key]) > 0
+            else self.mono_envs[key].action_space
+            for key in self.keys
+        }
+
+        self.keep_original = keep_original
+        if keep_original:
+            for key, mono_env in self.mono_envs.items():
+                observation_space[f"original/{key}"] = mono_env.observation_space
+
+        # Set the action/observation space
+        self._action_space = spaces.Dict(action_space)
+        self._observation_space = spaces.Dict(observation_space)
 
     def action(self, actions: WrapperActType) -> ActType:
         new_action = {}
@@ -290,6 +308,9 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
         new_observation = {}
         for key in self.keys:
             observation = observations[key]
+            if self.keep_original:
+                new_observation[f"original/{key}"] = observation
+
             for wrapper in reversed(self.wrappers[key]):
                 if isinstance(
                     wrapper, (gym.ObservationWrapper, ActionObservationWrapper)

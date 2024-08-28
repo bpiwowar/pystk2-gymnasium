@@ -82,8 +82,9 @@ class ConstantSizedObservations(gym.ObservationWrapper):
         space["items_position"] = spaces.Box(
             -float("inf"), float("inf"), shape=(self.state_items, 3), dtype=np.float32
         )
-        space["items_type"] = spaces.Box(
-            0, max_enum_value(pystk2.Item), dtype=np.int64, shape=(self.state_items,)
+        n_item_types = max_enum_value(pystk2.Item)
+        space["items_type"] = spaces.MultiDiscrete(
+            [n_item_types for _ in range(self.state_items)]
         )
         space["karts_position"] = spaces.Box(
             -float("inf"), float("inf"), shape=(self.state_karts, 3)
@@ -133,7 +134,7 @@ class STKDiscreteAction(STKAction):
 
 class DiscreteActionsWrapper(ActionObservationWrapper):
     # Wraps the actions
-    def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=10, **kwargs):
+    def __init__(self, env: gym.Env, *, acceleration_steps=5, steer_steps=7, **kwargs):
         super().__init__(env, **kwargs)
 
         self._action_space = copy.deepcopy(env.action_space)
