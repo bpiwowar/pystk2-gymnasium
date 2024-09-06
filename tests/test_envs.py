@@ -1,3 +1,4 @@
+import logging
 import gymnasium as gym
 import pytest
 import pystk2_gymnasium  # noqa: F401
@@ -29,6 +30,9 @@ def test_env(name, use_ai):
             done = truncated or terminated
             if done:
                 break
+    except Exception:
+        logging.exception("with environment %s", env.current_track)
+        raise
     finally:
         if env is not None:
             env.close()

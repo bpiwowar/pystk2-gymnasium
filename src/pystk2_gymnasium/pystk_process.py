@@ -88,9 +88,6 @@ class PySTKRemoteProcess:
             return Exception("Cannot step since race has not been started")
         return self.race.get_kart_action(kart_ix)
 
-    def has_race(self):
-        return self.race is not None
-
 
 class PySTKProcess:
     COUNT = 0
