@@ -21,6 +21,7 @@ def test_env(name, use_ai):
         ix = 0
         done = False
         state, *_ = env.reset()
+        logging.exception("Running with environment %s", env.unwrapped.current_track)
 
         for _ in range(10):
             ix += 1
@@ -30,9 +31,6 @@ def test_env(name, use_ai):
             done = truncated or terminated
             if done:
                 break
-    except Exception:
-        logging.exception("with environment %s", env.current_track)
-        raise
     finally:
         if env is not None:
             env.close()

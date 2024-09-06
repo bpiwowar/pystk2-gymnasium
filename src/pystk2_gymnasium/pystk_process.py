@@ -6,6 +6,8 @@ import sys
 from typing import List, Optional
 import pystk2
 
+logger = logging.getLogger("pystk2_gymnasium.mp")
+
 
 class PySTKRemoteProcess:
     world: Optional[pystk2.WorldState] = None
@@ -61,8 +63,7 @@ class PySTKRemoteProcess:
         # Start race
         self.race.start()
         self.world = pystk2.WorldState()
-        self.track = pystk2.Track()
-        self.track.update()
+        track = pystk2.Track()
 
         while True:
             self.race.step()
@@ -70,7 +71,8 @@ class PySTKRemoteProcess:
             if self.world.phase == pystk2.WorldState.Phase.GO_PHASE:
                 break
 
-        return self.track
+        track.update()
+        return track
 
     def get_world(self):
         if self.world is None:
