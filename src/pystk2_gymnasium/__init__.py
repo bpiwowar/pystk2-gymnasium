@@ -1,6 +1,15 @@
 from gymnasium.envs.registration import register, WrapperSpec
 from .definitions import ActionObservationWrapper, AgentSpec  # noqa: F401
-from .wrappers import MonoAgentWrapperAdapter  # noqa: F401
+from .wrappers import (  # noqa: F401
+    MonoAgentWrapperAdapter,
+    FlattenMultiDiscreteActions,
+    FlattenerWrapper,
+)
+from .stk_wrappers import (  # noqa: F401
+    ConstantSizedObservations,
+    DiscreteActionsWrapper,
+    PolarObservations,
+)
 
 # Version is setup automatically
 __version__ = "0.0.0"

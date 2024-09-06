@@ -7,23 +7,19 @@ from pystk2_gymnasium.envs import STKRaceEnv
 
 
 def test_rotation():
-    race = None
+    env = None
     try:
-        STKRaceEnv.initialize(False)
-
-        config = pystk2.RaceConfig(num_kart=1, track="lighthouse")
-
-        race = pystk2.Race(config)
-        world = pystk2.WorldState()
-        race.start()
-        world.update()
+        env = STKRaceEnv()
+        env.initialize(False)
+        env.config = pystk2.RaceConfig(num_kart=1, track="lighthouse")
+        env.warmup_race()
+        world = env.world_update(False)
 
         kart = world.karts[0]
         np.allclose(kart.velocity_lc, rotate(kart.velocity, kart.rotation))
     finally:
-        if race is not None:
-            race.stop()
-            del race
+        if env is not None:
+            env.close()
 
 
 def test_discretizer():

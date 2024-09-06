@@ -22,19 +22,18 @@ Each controlled kart is parametrized by `pystk2_gymnasium.AgentSpec`:
 - `name` defines name of the player (displayed on top of the kart)
 - `rank_start` defines the starting position (None for random, which is the
   default)
-- `use_ai` flag (False by default) to ignore actions (when calling `step`, and
-  use a SuperTuxKart bot)
+- `use_ai` flag (False by default) to ignore actions (when calling `step`,  a
+  SuperTuxKart bot is used instead of using the action)
 - `camera_mode` can be set to `AUTO` (camera on for non STK bots), `ON` (camera
   on) or `OFF` (no camera).
 
 
+## Current limitations
+
+-  no graphics information is available (i.e. pixmap)
+
 
 ## Environments
-
-Limitations:
-
--  only one SuperTuxKart environment can be created for now
--  no graphics information is available (i.e. pixmap)
 
 After importing `pystk2_gymnasium`, the following environments are available:
 
@@ -55,19 +54,22 @@ After importing `pystk2_gymnasium`, the following environments are available:
     - `difficulty` is the difficulty of the AI bots (lowest 0 to highest 2,
       default to 2)
 
-Some environments are created using wrappers,
-- `supertuxkart/simple-v0` is a simplified environment with a fixed number of
-  observations for paths (controlled by `state_paths`, default 5), items
-  (`state_items`, default 5), karts (`state_karts`, default 5)
-- `supertuxkart/flattened-v0` has observation and action spaces simplified at
-  the maximum (only `discrete` and `continuous` keys)
-- `supertuxkart/flattened_continuous_actions-v0` removes discrete actions
+Some environments are created using wrappers (see below for wrapper
+documentation),
+- `supertuxkart/simple-v0` (wrappers: `ConstantSizedObservations`) is a
+  simplified environment with a fixed number of observations for paths
+  (controlled by `state_paths`, default 5), items (`state_items`, default 5),
+  karts (`state_karts`, default 5)
+- `supertuxkart/flattened-v0` (wrappers: `ConstantSizedObservations`,
+  `PolarObservations`, `FlattenerWrapper`) has observation and action spaces
+  simplified at the maximum (only `discrete` and `continuous` keys)
+- `supertuxkart/flattened_continuous_actions-v0` (wrappers: `ConstantSizedObservations`, `PolarObservations`, `OnlyContinuousActionsWrapper`, `FlattenerWrapper`) removes discrete actions
   (default to 0) so this is steer/acceleration only in the continuous domain
-- `supertuxkart/flattened_multidiscrete-v0` is like the previous one, but with
+- `supertuxkart/flattened_multidiscrete-v0` (wrappers: `ConstantSizedObservations`, `PolarObservations`, `DiscreteActionsWrapper`, `FlattenerWrapper`) is like the previous one, but with
   fully multi-discrete actions. `acceleration_steps` and `steer_steps` (default
   to 5) control the number of discrete values for acceleration and steering
   respectively.
-- `supertuxkart/flattened_discrete-v0` is like the previous one, but with fully
+- `supertuxkart/flattened_discrete-v0` (wrappers: `ConstantSizedObservations`, `PolarObservations`, `DiscreteActionsWrapper`, `FlattenerWrapper`, `FlattenMultiDiscreteActions`) is like the previous one, but with fully
   discretized actions
 
 The reward $r_t$ at time $t$ is given by
@@ -83,20 +85,41 @@ finishes the race.
 
 Wrappers can be used to modify the environment.
 
-### ConstantSizedObservations
+### Constant-size observation
 
-Ensures that the number of observed items is constant (e.g. for other karts,
-tracks).
+`pystk2_gymnasium.ConstantSizedObservations( env, state_items=5,
+  state_karts=5, state_paths=5 )` ensures that the number of observed items,
+karts and paths is constant. By default, the number of observations per category
+is 5.
 
-### PolarObservations
+### Polar observations
 
-Changes Cartesian coordinates to Polar ones.
+`pystk2_gymnasium.PolarObservations(env)` changes Cartesian
+coordinates to polar ones (angle in the horizontal plane, angle in the vertical plan, and distance) of all 3D vectors.
 
-### FlattenerWrapper
+### Discrete actions
 
-Flattens actions and observations
+`pystk2_gymnasium.DiscreteActionsWrapper(env, acceleration_steps=5, steer_steps=7)` discretizes acceleration and steer actions (5 and 7 values respectively).
 
-### FlattenMultiDiscreteActions
+### Flattener (actions and observations)
+
+This wrapper groups all continuous and discrete spaces together.
+
+`pystk2_gymnasium.FlattenerWrapper(env)` flattens **actions and
+observations**. The base environment should be a dictionary of observation
+spaces. The transformed environment is a dictionary made with two entries,
+`discrete` and `continuous` (if both continuous and discrete
+observations/actions are present in the initial environment, otherwise it is
+either the type of `discrete` or `continuous`). `discrete` is `MultiDiscrete`
+space that combines all the discrete (and multi-discrete) observations, while
+`continuous` is a `Box` space.
+
+### Flatten multi-discrete actions
+
+`pystk2_gymnasium.FlattenMultiDiscreteActions(env)` flattens a multi-discrete
+action space into a discrete one, with one action per possible unique choice of
+actions. For instance, if the initial space is $\{0, 1\} \times \{0, 1, 2\}$,
+the action space becomes $\{0, 1, \ldots, 6\}$.
 
 
 ## Multi-agent environment
@@ -107,9 +130,13 @@ dictionary of single-kart ones where **string** keys that range from `0` to
 `n-1` with `n` the number of karts.
 
 To use different gymnasium wrappers, one can use a `MonoAgentWrapperAdapter`.
-Example
+
+Let's look at an example to illustrate this:
 
 ```py
+
+from pystk_gymnasium import AgentSpec
+
 agents = [
     AgentSpec(use_ai=True, name="Yin Team", camera_mode=CameraMode.ON),
     AgentSpec(use_ai=True, name="Yang Team", camera_mode=CameraMode.ON),
@@ -155,7 +182,8 @@ up):
 - `paths_start`, `paths_end`, `paths_width`: 3D vectors to the paths start and
   end, and vector of their widths (scalar). The paths are sorted so that the
   first element of the array is the current one.
-- `paths_distance`: the distance of the paths starts and ends (vector of dimension 2)
+- `paths_distance`: the distance of the paths starts and ends (vector of
+  dimension 2)
 - `powerup`: collected power-up
 - `shield_time`
 - `skeed_factor`
@@ -167,19 +195,25 @@ up):
 import gymnasium as gym
 from pystk2_gymnasium import AgentSpec
 
-# Use a a flattened version of the observation and action spaces
-# In both case, this corresponds to a dictionary with two keys:
-# - `continuous` is a vector corresponding to the continuous observations
-# - `discrete` is a vector (of integers) corresponding to discrete observations
-env = gym.make("supertuxkart/flattened-v0", render_mode="human", agents=[AgentSpec(use_ai=False)])
 
-ix = 0
-done = False
-state, *_ = env.reset()
+# STK gymnasium uses one process
+if __name__ == '__main__':
+  # Use a a flattened version of the observation and action spaces
+  # In both case, this corresponds to a dictionary with two keys:
+  # - `continuous` is a vector corresponding to the continuous observations
+  # - `discrete` is a vector (of integers) corresponding to discrete observations
+  env = gym.make("supertuxkart/flattened-v0", render_mode="human", agent=AgentSpec(use_ai=False))
 
-while not done:
-    ix += 1
-    action = env.action_space.sample()
-    state, reward, terminated, truncated, _ = env.step(action)
-    done = truncated or terminated
+  ix = 0
+  done = False
+  state, *_ = env.reset()
+
+  while not done:
+      ix += 1
+      action = env.action_space.sample()
+      state, reward, terminated, truncated, _ = env.step(action)
+      done = truncated or terminated
+
+  # Important to stop the STK process
+  env.close()
 ```

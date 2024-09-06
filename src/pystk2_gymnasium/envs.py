@@ -7,6 +7,8 @@ import numpy as np
 import pystk2
 from gymnasium import spaces
 
+from pystk2_gymnasium.pystk_process import PySTKProcess
+
 from .utils import max_enum_value, rotate
 from .definitions import AgentSpec
 
@@ -117,28 +119,18 @@ def get_action(action: STKAction):
 class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
     metadata = {"render_modes": ["human"]}
 
-    INITIALIZED: ClassVar[Optional[bool]] = None
-
     #: List of available tracks
     TRACKS: ClassVar[List[str]] = []
 
-    @staticmethod
-    def initialize(with_graphics: bool):
-        if BaseSTKRaceEnv.INITIALIZED is None:
-            BaseSTKRaceEnv.INITIALIZED = with_graphics
-            pystk2.init(
-                pystk2.GraphicsConfig.hd()
-                if with_graphics
-                else pystk2.GraphicsConfig.none()
-            )
+    #: Flag when pystk is initialized
+    _process: PySTKProcess = None
 
-        assert (
-            with_graphics == BaseSTKRaceEnv.INITIALIZED
-        ), "Cannot switch from graphics to not graphics mode"
+    def initialize(self, with_graphics: bool):
+        if self._process is None:
+            self._process = PySTKProcess(with_graphics)
 
-        BaseSTKRaceEnv.TRACKS = pystk2.list_tracks(
-            pystk2.RaceConfig.RaceMode.NORMAL_RACE
-        )
+        if not BaseSTKRaceEnv.TRACKS:
+            BaseSTKRaceEnv.TRACKS = self._process.list_tracks()
 
     def __init__(
         self,
@@ -164,7 +156,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
-        BaseSTKRaceEnv.initialize(render_mode == "human")
+        self.initialize(render_mode == "human")
 
         # Setup the variables
         self.default_track = track
@@ -207,36 +199,14 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
                 ix
             ].controller = pystk2.PlayerConfig.Controller.AI_CONTROL
 
-    def warmup_race(self):
-        """Creates a new race and step until the first move"""
-        assert self.race is None
-
-        self.race = pystk2.Race(self.config)
-
-        # Start race
-        self.race.start()
-        self.world = pystk2.WorldState()
-        self.track = pystk2.Track()
-        self.track.update()
-
-        while True:
-            self.race.step()
-            self.world.update()
-            if self.world.phase == pystk2.WorldState.Phase.GO_PHASE:
-                break
-
-    def close(self):
-        super().close()
-        if self.race is not None:
-            self.race.stop()
-            self.race = None
-
-    def world_update(self):
+    def world_update(self, keep=True):
         """Update world state, but keep some information to compute reward"""
-        self.last_overall_distances = [
-            max(kart.overall_distance, 0) for kart in self.world.karts
-        ]
-        self.world.update()
+        if keep:
+            self.last_overall_distances = [
+                max(kart.overall_distance, 0) for kart in self.world.karts
+            ]
+        self.world = self._process.get_world()
+        return self.world
 
     def get_state(self, kart_ix: int, use_ai: bool):
         kart = self.world.karts[kart_ix]
@@ -337,7 +307,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         obs = {}
         if use_ai:
             # Adds actions
-            action = self.race.get_kart_action(kart_ix)
+            action = self._process.get_kart_action(kart_ix)
             obs = {
                 "action": {
                     "acceleration": np.array([action.acceleration], dtype=np.float32),
@@ -392,6 +362,15 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         # Just do nothing... rendering is done directly
         pass
 
+    def race_step(self, *action):
+        return self._process.race_step(*action)
+
+    def warmup_race(self):
+        self.track = self._process.warmup_race(self.config)
+
+    def close(self):
+        self._process.close()
+
 
 class STKRaceEnv(BaseSTKRaceEnv):
     """Single player race environment"""
@@ -445,7 +424,7 @@ class STKRaceEnv(BaseSTKRaceEnv):
             ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
 
         self.warmup_race()
-        self.world.update()
+        self.world_update(False)
 
         return self.get_observation(self.kart_ix, self.agent.use_ai), {}
 
@@ -453,9 +432,9 @@ class STKRaceEnv(BaseSTKRaceEnv):
         self, action: STKAction
     ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
         if self.agent.use_ai:
-            self.race.step()
+            self.race_step()
         else:
-            self.race.step(get_action(action))
+            self.race_step(get_action(action))
 
         self.world_update()
 
@@ -537,7 +516,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         logging.debug("Observed kart indices %s", self.kart_indices)
 
         self.warmup_race()
-        self.world.update()
+        self.world_update(False)
 
         return (
             {
@@ -554,7 +533,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
     ) -> Tuple[pystk2.WorldState, float, bool, bool, Dict[str, Any]]:
         # Performs the action
         assert len(actions) == len(self.agents)
-        self.race.step(
+        self.race_step(
             [
                 get_action(actions[str(agent_ix)])
                 for agent_ix, agent in enumerate(self.agents)

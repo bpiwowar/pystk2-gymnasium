@@ -1,3 +1,8 @@
+# Version 0.6.0
+
+- *Multiprocess*: no more limitation on the number of races
+- Improved documentation
+
 # Version 0.5.0
 
 - Changed default for steer discretization steps (7)
