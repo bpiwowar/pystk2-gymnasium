@@ -132,6 +132,10 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         if not BaseSTKRaceEnv.TRACKS:
             BaseSTKRaceEnv.TRACKS = self._process.list_tracks()
 
+    def __del__(self):
+        if self._process:
+            self._process.close()
+
     def __init__(
         self,
         *,

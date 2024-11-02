@@ -56,7 +56,9 @@ class PySTKRemoteProcess:
 
     def warmup_race(self, config) -> pystk2.Track:
         """Creates a new race and step until the first move"""
-        assert self.race is None
+        if self.race is not None:
+            self.race.stop()
+            self.race = None
 
         self.race = pystk2.Race(config)
 
@@ -97,6 +99,7 @@ class PySTKProcess:
     def __init__(self, with_graphics: bool):
         self.pipe, remote_pipe = Pipe(True)
         PySTKProcess.COUNT += 1
+        logging.info(f"Creating pystk-{PySTKProcess.COUNT}")
         self.process = Process(
             name=f"pystk-{PySTKProcess.COUNT}",
             target=PySTKRemoteProcess.run,
