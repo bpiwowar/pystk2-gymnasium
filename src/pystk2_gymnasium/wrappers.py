@@ -1,6 +1,7 @@
 """
 This module contains generic wrappers
 """
+from copy import copy
 from typing import Any, Callable, Dict, List, SupportsFloat, Tuple
 
 import gymnasium as gym
@@ -99,30 +100,37 @@ class SpaceFlattener:
 class FlattenerWrapper(ActionObservationWrapper):
     """Flattens actions and observations."""
 
-    def __init__(self, env: gym.Env):
+    def __init__(self, env: gym.Env, flatten_observations=True):
         super().__init__(env)
 
-        self.observation_flattener = SpaceFlattener(env.observation_space)
-        self.observation_space = self.observation_flattener.space
+        self.flatten_observations = flatten_observations
+        self.has_action = env.observation_space.get("action", None) is not None
 
         self.action_flattener = SpaceFlattener(env.action_space)
         self.action_space = self.action_flattener.space
 
-        # Adds action in the space
-        self.has_action = env.observation_space.get("action", None) is not None
-        if self.has_action:
+        if flatten_observations:
+            self.observation_flattener = SpaceFlattener(env.observation_space)
+            self.observation_space = self.observation_flattener.space
+        elif self.has_action:
+            self.observation_space = copy(env.observation_space)
             self.observation_space["action"] = self.action_flattener.space
 
     def observation(self, observation):
-        new_obs = {
-            "discrete": np.array(self.observation_flattener.discrete(observation)),
-            "continuous": np.concatenate(
-                [
-                    observation[key].flatten()
-                    for key in self.observation_flattener.continuous_keys
-                ]
-            ),
-        }
+        if self.flatten_observations:
+            new_obs = {
+                "discrete": np.array(self.observation_flattener.discrete(observation)),
+                "continuous": np.concatenate(
+                    [
+                        observation[key].flatten()
+                        for key in self.observation_flattener.continuous_keys
+                    ]
+                ),
+            }
+        elif self.has_action:
+            new_obs = {key: value for key, value in observation.items()}
+        else:
+            return observation
 
         if self.has_action:
             # Transforms from nested action to a flattened
