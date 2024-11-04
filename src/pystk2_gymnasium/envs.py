@@ -247,6 +247,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             """
             return rotate(x - kart.location, kart.rotation)
 
+        # Index of the first segment for which distance_down_track
+        # is between start and end
         path_ix = next(
             ix[0]
             for ix, d in np.ndenumerate(self.track.path_distance[:, 1])
@@ -453,9 +455,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
     def __init__(self, *, agents: List[AgentSpec] = None, **kwargs):
         """Creates a new race
 
-        :param rank_start: The position of the controlled kart, defaults to None
-            for random, 0 to num_kart-1 assigns a rank, all the other values
-            discard the controlled kart.
+        :param agents: List of agent specifications.
         :param kwargs: General parameters, see BaseSTKRaceEnv
         """
         super().__init__(**kwargs)
@@ -517,7 +517,11 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
                 ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
             self.config.players[kart_ix].name = agent.name
 
-        logging.debug("Observed kart indices %s", self.kart_indices)
+        self.kart_m_indices = list(range(len(self.kart_indices)))
+        self.kart_m_indices.sort(key=lambda ix: self.kart_indices[ix])
+        logging.debug(
+            "Observed kart indices %s / %s", self.kart_indices, self.kart_m_indices
+        )
 
         self.warmup_race()
         self.world_update(False)
@@ -540,7 +544,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         self.race_step(
             [
                 get_action(actions[str(agent_ix)])
-                for agent_ix, agent in enumerate(self.agents)
+                for agent_ix, agent in zip(self.kart_m_indices, self.agents)
                 if not agent.use_ai
             ]
         )
