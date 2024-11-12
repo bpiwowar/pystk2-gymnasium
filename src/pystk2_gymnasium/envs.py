@@ -1,3 +1,4 @@
+from enum import Enum
 import logging
 import functools
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, TypedDict
@@ -37,10 +38,38 @@ def kart_action_space():
     )
 
 
+class Phase(Enum):
+    """A phase in PySTK (subset of STK phases)"""
+
+    # 'Ready' is displayed
+    READY_PHASE = 0
+
+    # 'Set' is displayed
+    SET_PHASE = 1
+
+    # 'Go' is displayed, but this is already race phase
+    GO_PHASE = 2
+
+    # Other phases
+    RACE_PHASE = 3
+
+    @staticmethod
+    def from_stk(source: pystk2.WorldState.Phase):
+        if (source is None) or (source == pystk2.WorldState.Phase.READY_PHASE):
+            return Phase.READY_PHASE
+        if source == pystk2.WorldState.Phase.SET_PHASE:
+            return Phase.SET_PHASE
+        if source == pystk2.WorldState.Phase.GO_PHASE:
+            return Phase.GO_PHASE
+        return Phase.RACE_PHASE
+
+
 @functools.lru_cache
 def kart_observation_space(use_ai: bool):
     space = spaces.Dict(
         {
+            "aux_ticks": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
+            "phase": spaces.Discrete(max_enum_value(Phase)),
             "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
             # Last attachment... is no attachment
             "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
@@ -328,6 +357,9 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 
         return {
             **obs,
+            # World properties
+            "phase": Phase.from_stk(self.world.phase).value,
+            "aux_ticks": np.array([self.world.aux_ticks], dtype=np.float32),
             # Kart properties
             "powerup": kart.powerup.num,
             "attachment": kart.attachment.type.value,

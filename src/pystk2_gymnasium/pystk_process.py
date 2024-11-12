@@ -70,7 +70,7 @@ class PySTKRemoteProcess:
         while True:
             self.race.step()
             self.world.update()
-            if self.world.phase == pystk2.WorldState.Phase.GO_PHASE:
+            if self.world.phase == pystk2.WorldState.Phase.READY_PHASE:
                 break
 
         track.update()
