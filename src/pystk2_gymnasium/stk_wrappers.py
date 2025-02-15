@@ -18,6 +18,8 @@ from pystk2_gymnasium.utils import Discretizer, max_enum_value
 class PolarObservations(gym.ObservationWrapper):
     """Modifies position to polar positions
 
+    Angles are in radian
+
     input: X right, Y up, Z forwards
     output: (angle in the ZX plane, angle in the ZY plane, distance)
     """
@@ -43,16 +45,31 @@ class PolarObservations(gym.ObservationWrapper):
 
         for key in PolarObservations.KEYS:
             v = obs[key]
+
+            is_tuple = False
+            if isinstance(v, tuple):
+                is_tuple = True
+                v = np.stack(v)
             distance = np.linalg.norm(v, axis=1)
             angle_zx = np.arctan2(v[:, 0], v[:, 2])
             angle_zy = np.arctan2(v[:, 1], v[:, 2])
             v[:, 0], v[:, 1], v[:, 2] = angle_zx, angle_zy, distance
+
+            if is_tuple:
+                obs[key] = tuple(x for x in v)
         return obs
 
 
 class ConstantSizedObservations(gym.ObservationWrapper):
     def __init__(
-        self, env: gym.Env, *, state_items=5, state_karts=5, state_paths=5, **kwargs
+        self,
+        env: gym.Env,
+        *,
+        state_items=5,
+        state_karts=5,
+        state_paths=5,
+        add_mask=False,
+        **kwargs,
     ):
         """A simpler race environment with fixed width data
 
@@ -90,7 +107,19 @@ class ConstantSizedObservations(gym.ObservationWrapper):
             -float("inf"), float("inf"), shape=(self.state_karts, 3)
         )
 
-    def make_tensor(self, state, name: str):
+        self.add_mask = add_mask
+        if add_mask:
+            space["paths_mask"] = spaces.Box(
+                0, 1, shape=(self.state_paths,), dtype=np.int8
+            )
+            space["items_mask"] = spaces.Box(
+                0, 1, shape=(self.state_items,), dtype=np.int8
+            )
+            space["karts_mask"] = spaces.Box(
+                0, 1, shape=(self.state_karts,), dtype=np.int8
+            )
+
+    def make_tensor(self, state, name: str, default_value=0):
         value = state[name]
         space = self.observation_space[name]
 
@@ -102,7 +131,9 @@ class ConstantSizedObservations(gym.ObservationWrapper):
         delta = space.shape[0] - value.shape[0]
         if delta > 0:
             shape = [delta] + list(space.shape[1:])
-            value = np.concatenate([value, np.zeros(shape, dtype=space.dtype)], axis=0)
+            value = np.concatenate(
+                [value, np.full(shape, default_value, dtype=space.dtype)], axis=0
+            )
         elif delta < 0:
             value = value[:delta]
 
@@ -114,6 +145,17 @@ class ConstantSizedObservations(gym.ObservationWrapper):
     def observation(self, state):
         # Shallow copy
         state = {**state}
+
+        # Add masks
+        def mask(length: int, size: int):
+            v = np.zeros((size,), dtype=np.int8)
+            v[:length] = 1
+            return v
+
+        if self.add_mask:
+            state["paths_mask"] = mask(len(state["paths_width"]), self.state_paths)
+            state["items_mask"] = mask(len(state["items_type"]), self.state_items)
+            state["karts_mask"] = mask(len(state["karts_position"]), self.state_karts)
 
         # Ensures that the size of observations is constant
         self.make_tensor(state, "paths_distance")

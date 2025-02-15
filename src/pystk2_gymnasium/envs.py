@@ -1,3 +1,4 @@
+from enum import Enum
 import logging
 import functools
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, TypedDict
@@ -37,10 +38,38 @@ def kart_action_space():
     )
 
 
+class Phase(Enum):
+    """A phase in PySTK (subset of STK phases)"""
+
+    # 'Ready' is displayed
+    READY_PHASE = 0
+
+    # 'Set' is displayed
+    SET_PHASE = 1
+
+    # 'Go' is displayed, but this is already race phase
+    GO_PHASE = 2
+
+    # Other phases
+    RACE_PHASE = 3
+
+    @staticmethod
+    def from_stk(source: pystk2.WorldState.Phase):
+        if (source is None) or (source == pystk2.WorldState.Phase.READY_PHASE):
+            return Phase.READY_PHASE
+        if source == pystk2.WorldState.Phase.SET_PHASE:
+            return Phase.SET_PHASE
+        if source == pystk2.WorldState.Phase.GO_PHASE:
+            return Phase.GO_PHASE
+        return Phase.RACE_PHASE
+
+
 @functools.lru_cache
 def kart_observation_space(use_ai: bool):
     space = spaces.Dict(
         {
+            "aux_ticks": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
+            "phase": spaces.Discrete(max_enum_value(Phase)),
             "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
             # Last attachment... is no attachment
             "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
@@ -247,6 +276,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             """
             return rotate(x - kart.location, kart.rotation)
 
+        # Index of the first segment for which distance_down_track
+        # is between start and end
         path_ix = next(
             ix[0]
             for ix, d in np.ndenumerate(self.track.path_distance[:, 1])
@@ -326,6 +357,9 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 
         return {
             **obs,
+            # World properties
+            "phase": Phase.from_stk(self.world.phase).value,
+            "aux_ticks": np.array([self.world.aux_ticks], dtype=np.float32),
             # Kart properties
             "powerup": kart.powerup.num,
             "attachment": kart.attachment.type.value,
@@ -453,9 +487,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
     def __init__(self, *, agents: List[AgentSpec] = None, **kwargs):
         """Creates a new race
 
-        :param rank_start: The position of the controlled kart, defaults to None
-            for random, 0 to num_kart-1 assigns a rank, all the other values
-            discard the controlled kart.
+        :param agents: List of agent specifications.
         :param kwargs: General parameters, see BaseSTKRaceEnv
         """
         super().__init__(**kwargs)
@@ -517,7 +549,11 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
                 ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
             self.config.players[kart_ix].name = agent.name
 
-        logging.debug("Observed kart indices %s", self.kart_indices)
+        self.kart_m_indices = list(range(len(self.kart_indices)))
+        self.kart_m_indices.sort(key=lambda ix: self.kart_indices[ix])
+        logging.debug(
+            "Observed kart indices %s / %s", self.kart_indices, self.kart_m_indices
+        )
 
         self.warmup_race()
         self.world_update(False)
@@ -540,7 +576,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         self.race_step(
             [
                 get_action(actions[str(agent_ix)])
-                for agent_ix, agent in enumerate(self.agents)
+                for agent_ix, agent in zip(self.kart_m_indices, self.agents)
                 if not agent.use_ai
             ]
         )

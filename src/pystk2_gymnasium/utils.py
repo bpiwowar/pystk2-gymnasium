@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Type
 import numpy as np
 import gymnasium.spaces as spaces
@@ -48,7 +49,10 @@ def rotate(v: np.array, q: np.array):
 
 def max_enum_value(EnumType: Type):
     """Returns the maximum enum value in a given enum type"""
-    return max([v.value for v in EnumType.Type.__members__.values()]) + 1
+    if not issubclass(EnumType, Enum):
+        EnumType = EnumType.Type
+
+    return max([v.value for v in EnumType.__members__.values()]) + 1
 
 
 class Discretizer:

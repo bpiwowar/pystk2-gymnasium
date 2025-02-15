@@ -23,5 +23,5 @@ format-jinja = "{% if distance == 0 %}{{ base }}{% else %}{{ base }}+{{ distance
 
 [tool.poetry.dependencies]
 python = "^3.8"
-PySuperTuxKart2 = ">=0.3.8"
+PySuperTuxKart2 = ">=0.4.0"
 gymnasium = ">0.29.0"
