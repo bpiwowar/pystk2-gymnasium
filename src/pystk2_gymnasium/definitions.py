@@ -19,6 +19,14 @@ from gymnasium.core import (
 CameraMode = pystk2.PlayerConfig.CameraMode
 
 
+class AgentException(Exception):
+    """Exception for a given agent"""
+
+    def __init__(self, message: str, key: str):
+        super().__init__(message)
+        self.key = key
+
+
 @dataclass
 class AgentSpec:
     #: The position of the controlled kart, defaults to None for random, 0 to

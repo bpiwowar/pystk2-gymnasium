@@ -122,7 +122,8 @@ class PySTKProcess:
         return result
 
     def __del__(self):
-        logging.debug("Stopping the process")
+        if logging.debug:
+            logging.debug("Stopping the process")
         try:
             self.close()
         except BrokenPipeError:

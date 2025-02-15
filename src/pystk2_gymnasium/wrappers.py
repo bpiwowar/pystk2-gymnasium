@@ -15,7 +15,7 @@ from gymnasium.core import (
 )
 import numpy as np
 
-from pystk2_gymnasium.definitions import ActionObservationWrapper
+from pystk2_gymnasium.definitions import ActionObservationWrapper, AgentException
 
 
 class SpaceFlattener:
@@ -296,26 +296,34 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
     def action(self, actions: WrapperActType) -> ActType:
         new_action = {}
         for key in self.keys:
-            action = actions[key]
-            for wrapper in self.wrappers[key]:
-                if isinstance(wrapper, (gym.ActionWrapper, ActionObservationWrapper)):
-                    action = wrapper.action(action)
-            new_action[key] = action
+            try:
+                action = actions[key]
+                for wrapper in self.wrappers[key]:
+                    if isinstance(
+                        wrapper, (gym.ActionWrapper, ActionObservationWrapper)
+                    ):
+                        action = wrapper.action(action)
+                new_action[key] = action
+            except Exception as exc:
+                raise AgentException(str(exc), key) from exc
 
         return new_action
 
     def observation(self, observations: ObsType) -> WrapperObsType:
         new_observation = {}
         for key in self.keys:
-            observation = observations[key]
-            if self.keep_original:
-                new_observation[f"original/{key}"] = observation
+            try:
+                observation = observations[key]
+                if self.keep_original:
+                    new_observation[f"original/{key}"] = observation
 
-            for wrapper in reversed(self.wrappers[key]):
-                if isinstance(
-                    wrapper, (gym.ObservationWrapper, ActionObservationWrapper)
-                ):
-                    observation = wrapper.observation(observation)
-            new_observation[key] = observation
+                for wrapper in reversed(self.wrappers[key]):
+                    if isinstance(
+                        wrapper, (gym.ObservationWrapper, ActionObservationWrapper)
+                    ):
+                        observation = wrapper.observation(observation)
+                new_observation[key] = observation
+            except Exception as exc:
+                raise AgentException(str(exc), key) from exc
 
         return new_observation
