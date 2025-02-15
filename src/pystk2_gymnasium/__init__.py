@@ -1,5 +1,9 @@
 from gymnasium.envs.registration import register, WrapperSpec
-from .definitions import ActionObservationWrapper, AgentSpec  # noqa: F401
+from .definitions import (  # noqa: F401
+    ActionObservationWrapper,
+    AgentSpec,
+    AgentException,
+)
 from .wrappers import (  # noqa: F401
     MonoAgentWrapperAdapter,
     FlattenMultiDiscreteActions,
