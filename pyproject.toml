@@ -1,27 +1,51 @@
-[tool.poetry]
-name = "pystk2-gymnasium"
-version = "0.0.0"
-description = "Gymnasium wrapper for PySTK2"
-authors = ["Benjamin Piwowarski <benjamin@piwowarski.fr>"]
-license = "GPL"
-readme = "README.md"
-homepage = "https://github.com/bpiwowar/pystk2-gymnasium"
-repository = "https://github.com/bpiwowar/pystk2-gymnasium"
-
-include = ["CHANGELOG.md"]
-
 [build-system]
-requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
-build-backend = "poetry_dynamic_versioning.backend"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
-[tool.poetry-dynamic-versioning]
-enable = true
-vcs = "git"
-style = "semver"
-dirty = true
-format-jinja = "{% if distance == 0 %}{{ base }}{% else %}{{ base }}+{{ distance }}.{{ commit }}{% if dirty %}.dirty{% endif %}{% endif %}"
+[project]
+name = "pystk2-gymnasium"
+description = "Gymnasium wrapper for PySTK2"
+authors = [
+    {name = "Benjamin Piwowarski", email = "benjamin@piwowarski.fr"},
+]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "PySuperTuxKart2>=0.4.0",
+    "gymnasium>0.29.0",
+]
+dynamic = ["version"]
 
-[tool.poetry.dependencies]
-python = "^3.8"
-PySuperTuxKart2 = ">=0.4.0"
-gymnasium = ">0.29.0"
+[project.urls]
+Homepage = "https://github.com/bpiwowar/pystk2-gymnasium"
+Repository = "https://github.com/bpiwowar/pystk2-gymnasium"
+Changelog = "https://github.com/bpiwowar/pystk2-gymnasium/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { local_scheme = "dirty-tag" }
+fallback-version = "0.1.0.dev0"
+write-to = "src/pystk2_gymnasium/_version.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/CHANGELOG.md",
+    "/README.md",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pystk2_gymnasium"]
