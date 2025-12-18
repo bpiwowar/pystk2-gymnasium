@@ -80,7 +80,7 @@ class ConstantSizedObservations(gym.ObservationWrapper):
         """
         super().__init__(env, **kwargs)
         if isinstance(env.unwrapped, STKRaceEnv) and env.unwrapped.max_paths is None:
-            logging.info("Setting main environment max_paths to %d", state_paths)
+            logging.info("Setting unwrapped environment max_paths to %d", state_paths)
             env.unwrapped.max_paths = min(
                 state_paths, env.unwrapped.max_paths or sys.maxsize
             )

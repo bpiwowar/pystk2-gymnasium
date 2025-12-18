@@ -297,9 +297,12 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
             else:
                 max_paths = min(env_max_paths, max_paths)
 
-            if max_paths is not None:
-                logging.info("Setting main environment max_paths to %d", max_paths)
-                env.unwrapped.max_paths = max_paths
+        if max_paths is not None:
+            logging.info(
+                "(multi-env mono adapter) Setting main environment max_paths to %d",
+                max_paths,
+            )
+            env.unwrapped.max_paths = max_paths
 
         # Change the action/observation space
         observation_space = {
