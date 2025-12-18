@@ -15,9 +15,10 @@ from .stk_wrappers import (  # noqa: F401
     PolarObservations,
 )
 
-# Version is setup automatically
-__version__ = "0.0.0"
-__version_tuple__ = (0, 0, 0)
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "unknown"
 
 register(
     id="supertuxkart/full-v0",

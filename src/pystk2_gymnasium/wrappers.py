@@ -1,6 +1,7 @@
 """
 This module contains generic wrappers
 """
+
 from copy import copy
 from typing import Any, Callable, Dict, List, SupportsFloat, Tuple
 
@@ -141,9 +142,11 @@ class FlattenerWrapper(ActionObservationWrapper):
             else:
                 continuous = np.concatenate(
                     [
-                        np.array([obs_action[key]])
-                        if isinstance(obs_action[key], float)
-                        else obs_action[key].flatten()
+                        (
+                            np.array([obs_action[key]])
+                            if isinstance(obs_action[key], float)
+                            else obs_action[key].flatten()
+                        )
                         for key in self.action_flattener.continuous_keys
                     ]
                 )
@@ -260,35 +263,42 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
         self.wrappers = {}
 
         for key in env.observation_space.keys():
-            mono_env = MultiMonoEnv(env, key)
-            self.mono_envs[key] = mono_env
-            wrapper = wrapper_factories[key](mono_env)
+            try:
+                mono_env = MultiMonoEnv(env, key)
+                self.mono_envs[key] = mono_env
+                wrapper = wrapper_factories[key](mono_env)
 
-            # Build up the list of action/observation wrappers
-            self.wrappers[key] = wrappers = []
-            while wrapper is not mono_env:
-                assert isinstance(
-                    wrapper,
-                    (
-                        gym.ObservationWrapper,
-                        gym.ActionWrapper,
-                        ActionObservationWrapper,
-                    ),
-                ), f"{type(wrapper)} is not an action/observation wrapper"
-                wrappers.append(wrapper)
-                wrapper = wrapper.env
+                # Build up the list of action/observation wrappers
+                self.wrappers[key] = wrappers = []
+                while wrapper is not mono_env:
+                    assert isinstance(
+                        wrapper,
+                        (
+                            gym.ObservationWrapper,
+                            gym.ActionWrapper,
+                            ActionObservationWrapper,
+                        ),
+                    ), f"{type(wrapper)} is not an action/observation wrapper"
+                    wrappers.append(wrapper)
+                    wrapper = wrapper.env
+            except Exception:
+                raise AgentException("Error when wrapping the environment", key)
 
         # Change the action/observation space
         observation_space = {
-            key: self.wrappers[key][0].observation_space
-            if len(self.wrappers[key]) > 0
-            else self.mono_envs[key].observation_space
+            key: (
+                self.wrappers[key][0].observation_space
+                if len(self.wrappers[key]) > 0
+                else self.mono_envs[key].observation_space
+            )
             for key in self.keys
         }
         action_space = {
-            key: self.wrappers[key][0].action_space
-            if len(self.wrappers[key]) > 0
-            else self.mono_envs[key].action_space
+            key: (
+                self.wrappers[key][0].action_space
+                if len(self.wrappers[key]) > 0
+                else self.mono_envs[key].action_space
+            )
             for key in self.keys
         }
 

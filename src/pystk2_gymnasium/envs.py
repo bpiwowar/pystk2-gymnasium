@@ -1,4 +1,5 @@
 from enum import Enum
+import heapq
 import logging
 import functools
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, TypedDict
@@ -208,7 +209,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         random: np.random.RandomState,
         *,
         options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
+    ):
         if self.race:
             self.race = None
 
@@ -228,9 +229,9 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         for ix in range(self.num_kart):
             if ix > 0:
                 self.config.players.append(pystk2.PlayerConfig())
-            self.config.players[
-                ix
-            ].controller = pystk2.PlayerConfig.Controller.AI_CONTROL
+            self.config.players[ix].controller = (
+                pystk2.PlayerConfig.Controller.AI_CONTROL
+            )
 
     def world_update(self, keep=True):
         """Update world state, but keep some information to compute reward"""
@@ -242,7 +243,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         return self.world
 
     def get_state(self, kart_ix: int, use_ai: bool):
-        kart = self.world.karts[kart_ix]
+        assert self.world is not None
+        kart: pystk2.Kart = self.world.karts[kart_ix]
         terminated = kart.has_finished_race
 
         # Get the observation and update the world state
@@ -267,7 +269,9 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         )
 
     def get_observation(self, kart_ix, use_ai):
-        kart = self.world.karts[kart_ix]
+        assert self.world is not None
+
+        kart: pystk2.Kart = self.world.karts[kart_ix]
 
         def kartview(x):
             """Returns a vector in the kart frame
@@ -276,26 +280,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             """
             return rotate(x - kart.location, kart.rotation)
 
-        # Index of the first segment for which distance_down_track
-        # is between start and end
-        path_ix = next(
-            ix[0]
-            for ix, d in np.ndenumerate(self.track.path_distance[:, 1])
-            if kart.distance_down_track <= d
-        )
-
-        def iterate_from(list, start):
-            if self.max_paths is not None:
-                size = min(len(list), self.max_paths)
-            else:
-                size = len(list)
-
-            ix = start
-            for _ in range(size):
-                yield list[ix]
-                ix += 1
-                if ix >= size:
-                    ix = 0
+        # Use STK to get the kart path index
+        path_ix = kart.node
 
         def list_permute(list, sort_ix):
             list[:] = (list[ix] for ix in sort_ix)
@@ -355,6 +341,40 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
                 }
             }
 
+        # --- Sets up the list of nodes to output
+        # (1) Set the maximum number of nodes
+        if self.max_paths is not None:
+            path_size = min(len(self.track.path_distance), self.max_paths)
+        else:
+            path_size = len(self.track.path_distance)
+
+        # Iterate by using the successor and path
+        # distance to break ties
+
+        _self = self
+
+        class PathComponent:
+            def __init__(self, ix):
+                self.ix = ix
+                # Distance from the kart node start
+                start: float = _self.track.path_distance[self.ix, 1]
+                self.distance = np.maximum(
+                    np.abs(start - _self.track.path_distance[path_ix, 1]),
+                    _self.track.length / 2,
+                )
+
+            def __lt__(self, other: "PathComponent"):
+                return self.distance < other.distance
+
+        path_indices: list[int] = []
+        path_heap: list[int] = [PathComponent(path_ix)]
+        for _ in range(path_size):
+            path = heapq.heappop(path_heap)
+            path_indices.append(path.ix)
+
+            for succ_ix in self.track.successors[path.ix]:
+                heapq.heappush(path_heap, PathComponent(succ_ix))
+
         return {
             **obs,
             # World properties
@@ -386,13 +406,15 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             # Other karts (kart point of view)
             "karts_position": tuple(karts_position),
             # Paths
-            "paths_distance": tuple(iterate_from(self.track.path_distance, path_ix)),
-            "paths_width": tuple(iterate_from(self.track.path_width, path_ix)),
+            "paths_distance": tuple(
+                self.track.path_distance[ix] for ix in path_indices
+            ),
+            "paths_width": tuple(self.track.path_width[ix] for ix in path_indices),
             "paths_start": tuple(
-                kartview(x[0]) for x in iterate_from(self.track.path_nodes, path_ix)
+                kartview(self.track.path_nodes[ix][0]) for ix in path_indices
             ),
             "paths_end": tuple(
-                kartview(x[1]) for x in iterate_from(self.track.path_nodes, path_ix)
+                kartview(self.track.path_nodes[ix][1]) for ix in path_indices
             ),
         }
 
@@ -405,6 +427,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
 
     def warmup_race(self):
         self.track = self._process.warmup_race(self.config)
+        assert len(self.track.successors) == len(self.track.path_nodes)
 
     def close(self):
         self._process.close()
@@ -451,15 +474,15 @@ class STKRaceEnv(BaseSTKRaceEnv):
         logging.debug("Observed kart index %d", self.kart_ix)
 
         # Camera setup
-        self.config.players[
-            self.kart_ix
-        ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
+        self.config.players[self.kart_ix].camera_mode = (
+            pystk2.PlayerConfig.CameraMode.ON
+        )
         self.config.players[self.kart_ix].name = self.agent.name
 
         if not self.agent.use_ai:
-            self.config.players[
-                self.kart_ix
-            ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+            self.config.players[self.kart_ix].controller = (
+                pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+            )
 
         self.warmup_race()
         self.world_update(False)
@@ -544,9 +567,9 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
             self.kart_indices.append(kart_ix)
             self.config.players[kart_ix].camera_mode = agent.camera_mode
             if not agent.use_ai:
-                self.config.players[
-                    kart_ix
-                ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+                self.config.players[kart_ix].controller = (
+                    pystk2.PlayerConfig.Controller.PLAYER_CONTROL
+                )
             self.config.players[kart_ix].name = agent.name
 
         self.kart_m_indices = list(range(len(self.kart_indices)))
