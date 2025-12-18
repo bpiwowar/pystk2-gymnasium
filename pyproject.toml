@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "PySuperTuxKart2>=0.4.0",
+    "PySuperTuxKart2>=0.5.1",
     "gymnasium>0.29.0",
 ]
 dynamic = ["version"]
