@@ -3,8 +3,6 @@ This module contains STK-specific wrappers
 """
 
 import copy
-import logging
-import sys
 from typing import Any, Dict, Tuple
 
 import gymnasium as gym
@@ -12,7 +10,7 @@ import numpy as np
 import pystk2
 from gymnasium import spaces
 
-from .envs import STKAction, STKRaceEnv
+from .envs import STKAction
 from .definitions import ActionObservationWrapper
 from pystk2_gymnasium.utils import Discretizer, max_enum_value
 
@@ -79,11 +77,6 @@ class ConstantSizedObservations(gym.ObservationWrapper):
         :param state_karts: The number of karts, defaults to 5
         """
         super().__init__(env, **kwargs)
-        if isinstance(env.unwrapped, STKRaceEnv) and env.unwrapped.max_paths is None:
-            logging.info("Setting unwrapped environment max_paths to %d", state_paths)
-            env.unwrapped.max_paths = min(
-                state_paths, env.unwrapped.max_paths or sys.maxsize
-            )
 
         self.state_items = state_items
         self.state_karts = state_karts

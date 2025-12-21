@@ -3,8 +3,6 @@ This module contains generic wrappers
 """
 
 from copy import copy
-import logging
-import sys
 from typing import Any, Callable, Dict, List, SupportsFloat, Tuple
 
 import gymnasium as gym
@@ -20,7 +18,6 @@ from gymnasium.core import (
 import numpy as np
 
 from pystk2_gymnasium.definitions import ActionObservationWrapper, AgentException
-from pystk2_gymnasium.stk_wrappers import ConstantSizedObservations
 
 
 class SpaceFlattener:
@@ -265,10 +262,8 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
         self.mono_envs = {}
         self.wrappers = {}
 
-        max_paths = sys.maxsize
         for key in env.observation_space.keys():
             try:
-                env_max_paths = None
                 mono_env = MultiMonoEnv(env, key)
                 self.mono_envs[key] = mono_env
                 wrapper = wrapper_factories[key](mono_env)
@@ -276,9 +271,6 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
                 # Build up the list of action/observation wrappers
                 self.wrappers[key] = wrappers = []
                 while wrapper is not mono_env:
-                    if isinstance(wrapper, ConstantSizedObservations):
-                        assert env_max_paths is None
-                        env_max_paths = wrapper.state_paths
                     assert isinstance(
                         wrapper,
                         (
@@ -291,18 +283,6 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
                     wrapper = wrapper.env
             except Exception as e:
                 raise AgentException("Error when wrapping the environment", key) from e
-
-            if env_max_paths is None or max_paths is None:
-                max_paths = None
-            else:
-                max_paths = min(env_max_paths, max_paths)
-
-        if max_paths is not None:
-            logging.info(
-                "(multi-env mono adapter) Setting main environment max_paths to %d",
-                max_paths,
-            )
-            env.unwrapped.max_paths = max_paths
 
         # Change the action/observation space
         observation_space = {
