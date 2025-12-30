@@ -525,6 +525,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         self.kart_indices = None
 
         ranked_agents = [agent for agent in agents if agent.rank_start is not None]
+        used_ranks = set([agent.rank_start for agent in ranked_agents])
 
         assert all(
             agent.rank_start < self.num_kart for agent in ranked_agents
@@ -534,7 +535,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         ), "Some agents have the same starting position"
 
         self.free_positions = [
-            ix for ix in range(self.num_kart) if ix not in ranked_agents
+            ix for ix in range(self.num_kart) if ix not in used_ranks
         ]
 
         self.action_space = spaces.Dict(
@@ -563,7 +564,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         pos_iter = iter(self.free_positions)
         self.kart_indices = []
         for agent in self.agents:
-            kart_ix = agent.rank_start or next(pos_iter)
+            kart_ix = next(pos_iter) if agent.rank_start is None else agent.rank_start
             self.kart_indices.append(kart_ix)
             self.config.players[kart_ix].camera_mode = agent.camera_mode
             if not agent.use_ai:
