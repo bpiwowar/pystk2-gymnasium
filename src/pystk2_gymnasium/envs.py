@@ -335,9 +335,9 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         for ix in range(self.num_kart):
             if ix > 0:
                 self.config.players.append(pystk2.PlayerConfig())
-            self.config.players[ix].controller = (
-                pystk2.PlayerConfig.Controller.AI_CONTROL
-            )
+            self.config.players[
+                ix
+            ].controller = pystk2.PlayerConfig.Controller.AI_CONTROL
 
     def world_update(self, keep=True):
         """Update world state, but keep some information to compute reward"""
@@ -588,15 +588,15 @@ class STKRaceEnv(BaseSTKRaceEnv):
         logging.debug("Observed kart index %d", self.kart_ix)
 
         # Camera setup
-        self.config.players[self.kart_ix].camera_mode = (
-            pystk2.PlayerConfig.CameraMode.ON
-        )
+        self.config.players[
+            self.kart_ix
+        ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
         self.config.players[self.kart_ix].name = self.agent.name
 
         if not self.agent.use_ai:
-            self.config.players[self.kart_ix].controller = (
-                pystk2.PlayerConfig.Controller.PLAYER_CONTROL
-            )
+            self.config.players[
+                self.kart_ix
+            ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
 
         self.warmup_race()
         self.world_update(False)
@@ -631,9 +631,9 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
 
         # Setup the variables
         self.agents = agents
-        assert (
-            len(self.agents) <= self.num_kart
-        ), f"Too many agents ({len(self.agents)}) for {self.num_kart} karts"
+        assert len(self.agents) <= self.num_kart, (
+            f"Too many agents ({len(self.agents)}) for {self.num_kart} karts"
+        )
 
         # Kart index for each agent (set when the race is setup)
         self.kart_indices = None
@@ -641,12 +641,12 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         ranked_agents = [agent for agent in agents if agent.rank_start is not None]
         used_ranks = set([agent.rank_start for agent in ranked_agents])
 
-        assert all(
-            agent.rank_start < self.num_kart for agent in ranked_agents
-        ), "Karts must have all have a valid position"
-        assert len(set(ranked_agents)) == len(
-            ranked_agents
-        ), "Some agents have the same starting position"
+        assert all(agent.rank_start < self.num_kart for agent in ranked_agents), (
+            "Karts must have all have a valid position"
+        )
+        assert len(set(ranked_agents)) == len(ranked_agents), (
+            "Some agents have the same starting position"
+        )
 
         self.free_positions = [
             ix for ix in range(self.num_kart) if ix not in used_ranks
@@ -668,7 +668,6 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[pystk2.WorldState, Dict[str, Any]]:
-
         random = np.random.RandomState(seed)
 
         super().reset_race(random, options=options)
@@ -682,9 +681,9 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
             self.kart_indices.append(kart_ix)
             self.config.players[kart_ix].camera_mode = agent.camera_mode
             if not agent.use_ai:
-                self.config.players[kart_ix].controller = (
-                    pystk2.PlayerConfig.Controller.PLAYER_CONTROL
-                )
+                self.config.players[
+                    kart_ix
+                ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
             self.config.players[kart_ix].name = agent.name
 
         self.kart_m_indices = list(range(len(self.kart_indices)))

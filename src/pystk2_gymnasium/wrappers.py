@@ -254,9 +254,9 @@ class MonoAgentWrapperAdapter(ActionObservationWrapper):
 
         # Perform some checks
         self.keys = set(self.action_space.keys())
-        assert self.keys == set(
-            self.observation_space.keys()
-        ), "Observation and action keys differ"
+        assert self.keys == set(self.observation_space.keys()), (
+            "Observation and action keys differ"
+        )
 
         # Setup the wrapped environment
         self.mono_envs = {}

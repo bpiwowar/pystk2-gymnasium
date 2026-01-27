@@ -125,9 +125,9 @@ class ConstantSizedObservations(gym.ObservationWrapper):
         space = self.observation_space[name]
 
         value = np.stack(value)
-        assert (
-            space.shape[1:] == value.shape[1:]
-        ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+        assert space.shape[1:] == value.shape[1:], (
+            f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+        )
 
         delta = space.shape[0] - value.shape[0]
         if delta > 0:
@@ -138,9 +138,9 @@ class ConstantSizedObservations(gym.ObservationWrapper):
         elif delta < 0:
             value = value[:delta]
 
-        assert (
-            space.shape == value.shape
-        ), f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+        assert space.shape == value.shape, (
+            f"Shape mismatch for {name}: {space.shape} vs {value.shape}"
+        )
         state[name] = value
 
     def observation(self, state):
@@ -194,9 +194,9 @@ class DiscreteActionsWrapper(ActionObservationWrapper):
             # When using AI, "action" is part of the observation space
             self._observation_space = copy.deepcopy(self.observation_space)
             self._observation_space["action"]["steer"] = self.d_steer.space
-            self._observation_space["action"][
-                "acceleration"
-            ] = self.d_acceleration.space
+            self._observation_space["action"]["acceleration"] = (
+                self.d_acceleration.space
+            )
 
     def from_discrete(self, action):
         action = {**action}

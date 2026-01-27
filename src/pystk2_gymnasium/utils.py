@@ -112,7 +112,7 @@ class Discretizer:
         assert v >= 0, f"discretized value {v} is below 0"
         if v >= self.values:
             v -= 1
-        assert v <= self.values, f"discretized value {v} is above {self.values-1}"
+        assert v <= self.values, f"discretized value {v} is above {self.values - 1}"
         return v
 
     def continuous(self, value: int):

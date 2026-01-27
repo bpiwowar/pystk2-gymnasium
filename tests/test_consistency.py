@@ -88,9 +88,9 @@ def test_path_cache_consistency():
                 track_name = candidate
                 break
 
-        assert (
-            track_name is not None
-        ), f"No track with branches found among {tracks_with_branches}"
+        assert track_name is not None, (
+            f"No track with branches found among {tracks_with_branches}"
+        )
 
         track = env.track
         path_cache = env.path_cache

@@ -1,7 +1,0 @@
-[flake8]
-
-doctests = True
-exclude =  .git, .eggs, __pycache__, tests/, docs/, build/, dist/
-max-line-length = 88
-# See https://github.com/PyCQA/pycodestyle/issues/373
-extend-ignore = E203

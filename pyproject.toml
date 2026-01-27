@@ -34,9 +34,13 @@ Changelog = "https://github.com/bpiwowar/pystk2-gymnasium/blob/main/CHANGELOG.md
 
 [tool.hatch.version]
 source = "vcs"
-raw-options = { local_scheme = "dirty-tag" }
 fallback-version = "0.1.0.dev0"
-write-to = "src/pystk2_gymnasium/_version.py"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/pystk2_gymnasium/_version.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -48,3 +52,30 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pystk2_gymnasium"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "pytest>=8.4.1",
+    "pytest-timeout>=2.4.0",
+    "pytest-dependency>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "W",      # pycodestyle warnings
+    "C90",    # mccabe complexity
+    "T20",    # flake8-print
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25

@@ -17,11 +17,11 @@ body = """
     {% for commit in commits
         | filter(attribute="scope")
         | sort(attribute="scope") %}
-        - **{{ commit.scope }}**: {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/experimaestro/experimaestro-python/commit/{{ commit.id }}))
+        - **{{ commit.scope }}**: {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/bpiwowar/pystk2-gymnasium/commit/{{ commit.id }}))
     {%- endfor -%}
     {% for commit in commits %}
         {%- if not commit.scope -%}
-        - {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/experimaestro/experimaestro-python/commit/{{ commit.id }}))
+        - {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/bpiwowar/pystk2-gymnasium/commit/{{ commit.id }}))
         {% endif -%}
     {%- endfor -%}
 {% endfor %}
