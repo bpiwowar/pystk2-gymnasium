@@ -14,6 +14,7 @@ from .stk_wrappers import (  # noqa: F401
     DiscreteActionsWrapper,
     PolarObservations,
 )
+from .vecenv import make_stkrace_vec  # noqa: F401
 
 try:
     from ._version import __version__

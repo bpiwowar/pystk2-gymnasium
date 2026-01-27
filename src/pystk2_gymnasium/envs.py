@@ -9,7 +9,11 @@ import numpy as np
 import pystk2
 from gymnasium import spaces
 
-from pystk2_gymnasium.pystk_process import PySTKProcess
+from pystk2_gymnasium.pystk_process import (
+    DirectSTKInterface,
+    PySTKProcess,
+    STKInterface,
+)
 
 from .utils import max_enum_value, rotate
 from .definitions import AgentSpec
@@ -152,19 +156,22 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
     #: List of available tracks
     TRACKS: ClassVar[List[str]] = []
 
-    #: Flag when pystk is initialized
-    _process: PySTKProcess = None
+    #: STK interface (either subprocess or direct)
+    _stk: STKInterface = None
 
-    def initialize(self, with_graphics: bool):
-        if self._process is None:
-            self._process = PySTKProcess(with_graphics)
+    def initialize(self, with_graphics: bool, use_subprocess: bool = True):
+        if self._stk is None:
+            if use_subprocess:
+                self._stk = PySTKProcess(with_graphics)
+            else:
+                self._stk = DirectSTKInterface(with_graphics)
 
         if not BaseSTKRaceEnv.TRACKS:
-            BaseSTKRaceEnv.TRACKS = self._process.list_tracks()
+            BaseSTKRaceEnv.TRACKS = self._stk.list_tracks()
 
     def __del__(self):
-        if self._process:
-            self._process.close()
+        if self._stk:
+            self._stk.close()
 
     def __init__(
         self,
@@ -175,6 +182,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         max_paths=None,
         laps: int = 1,
         difficulty: int = 2,
+        use_subprocess: bool = True,
     ):
         """Creates a new race
 
@@ -185,12 +193,15 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         :param max_paths: maximum number of paths ahead
         :param difficulty: AI bot skill level (from lowest 0 to highest 2)
         :param laps: Number of laps (default 1)
+        :param use_subprocess: If True, run STK in a subprocess (default).
+            If False, run STK directly in the current process. Use False when
+            running inside AsyncVectorEnv workers.
         """
         super().__init__()
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
-        self.initialize(render_mode == "human")
+        self.initialize(render_mode == "human", use_subprocess)
 
         # Setup the variables
         self.default_track = track
@@ -239,7 +250,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             self.last_overall_distances = [
                 max(kart.overall_distance, 0) for kart in self.world.karts
             ]
-        self.world = self._process.get_world()
+        self.world = self._stk.get_world()
         return self.world
 
     def get_state(self, kart_ix: int, use_ai: bool):
@@ -328,7 +339,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         obs = {}
         if use_ai:
             # Adds actions
-            action = self._process.get_kart_action(kart_ix)
+            action = self._stk.get_kart_action(kart_ix)
             obs = {
                 "action": {
                     "acceleration": np.array([action.acceleration], dtype=np.float32),
@@ -423,14 +434,14 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         pass
 
     def race_step(self, *action):
-        return self._process.race_step(*action)
+        return self._stk.race_step(*action)
 
     def warmup_race(self):
-        self.track = self._process.warmup_race(self.config)
+        self.track = self._stk.warmup_race(self.config)
         assert len(self.track.successors) == len(self.track.path_nodes)
 
     def close(self):
-        self._process.close()
+        self._stk.close()
 
 
 class STKRaceEnv(BaseSTKRaceEnv):
