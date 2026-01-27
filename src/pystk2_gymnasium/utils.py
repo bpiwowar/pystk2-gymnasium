@@ -47,6 +47,47 @@ def rotate(v: np.array, q: np.array):
     )
 
 
+@jit(nopython=True)
+def rotate_batch(vectors: np.ndarray, q: np.array) -> np.ndarray:
+    """Rotate multiple vectors by a quaternion (vectorized, JIT-compiled).
+
+    :param vectors: Array of shape (N, 3) containing N 3D vectors
+    :param q: The 4D quaternion [qw, qx, qy, qz]
+    :return: Array of shape (N, 3) with rotated vectors
+    """
+    qw, qx, qy, qz = q
+
+    # Pre-compute quaternion terms
+    qw2 = qw * qw
+    qx2 = qx * qx
+    qy2 = qy * qy
+    qz2 = qz * qz
+
+    # Rotation matrix elements (from quaternion)
+    r00 = qx2 + qw2 - qy2 - qz2
+    r01 = 2 * qx * qy - 2 * qw * qz
+    r02 = 2 * qx * qz + 2 * qw * qy
+    r10 = 2 * qw * qz + 2 * qx * qy
+    r11 = qw2 - qx2 + qy2 - qz2
+    r12 = -2 * qw * qx + 2 * qy * qz
+    r20 = -2 * qw * qy + 2 * qx * qz
+    r21 = 2 * qw * qx + 2 * qy * qz
+    r22 = qw2 - qx2 - qy2 + qz2
+
+    n = vectors.shape[0]
+    result = np.empty((n, 3), dtype=vectors.dtype)
+
+    for i in range(n):
+        x = vectors[i, 0]
+        y = vectors[i, 1]
+        z = vectors[i, 2]
+        result[i, 0] = x * r00 + y * r01 + z * r02
+        result[i, 1] = x * r10 + y * r11 + z * r12
+        result[i, 2] = x * r20 + y * r21 + z * r22
+
+    return result
+
+
 def max_enum_value(EnumType: Type):
     """Returns the maximum enum value in a given enum type"""
     if not issubclass(EnumType, Enum):

@@ -15,10 +15,104 @@ from pystk2_gymnasium.pystk_process import (
     STKInterface,
 )
 
-from .utils import max_enum_value, rotate
+from .utils import max_enum_value, rotate, rotate_batch
 from .definitions import AgentSpec
 
 logger = logging.getLogger("pystk2-gym")
+
+
+# Global cache: track_name -> PathCache
+_PATH_CACHE_REGISTRY: Dict[str, "PathCache"] = {}
+
+
+def get_path_cache(track_name: str, track: "pystk2.Track") -> "PathCache":
+    """Get or create a PathCache for a track (globally cached by track name)."""
+    if track_name not in _PATH_CACHE_REGISTRY:
+        _PATH_CACHE_REGISTRY[track_name] = PathCache(track)
+    return _PATH_CACHE_REGISTRY[track_name]
+
+
+class PathCache:
+    """Cache for path traversal on a track.
+
+    Memory-efficient iterator-based approach:
+    - No per-node caching of full path lists
+    - Uses heap for correct distance-based ordering
+    - Returns an iterator that stops at max_paths or when cycling back
+
+    Use get_path_cache() to get a globally cached instance by track name.
+    """
+
+    def __init__(self, track: "pystk2.Track"):
+        """Initialize path cache for a track.
+
+        :param track: The track object with path_distance and successors
+        """
+        self.num_nodes = len(track.path_distance)
+        self.track = track
+        self.successors = track.successors
+        self.path_distance = track.path_distance
+        self.track_length = track.length
+
+        # Identify branch points (for has_branches property)
+        self._branch_points: set = set()
+        for ix in range(self.num_nodes):
+            if len(self.successors[ix]) > 1:
+                self._branch_points.add(ix)
+
+    @property
+    def has_branches(self) -> bool:
+        """Return True if the track has branches."""
+        return len(self._branch_points) > 0
+
+    def iter_path_indices(self, start_ix: int, max_paths: Optional[int] = None):
+        """Iterate over path indices starting from start_ix, ordered by distance.
+
+        Uses heap-based traversal for correct distance ordering at branches.
+        Yields nodes in order of distance from start. Stops when:
+        - max_paths nodes have been yielded
+        - All reachable nodes visited (cycle complete)
+
+        :param start_ix: Starting node index
+        :param max_paths: Maximum number of nodes to yield (None = all)
+        """
+        visited: set = set()
+        count = 0
+
+        path_distance = self.path_distance
+        track_length = self.track_length
+        start_dist = path_distance[start_ix, 1]
+
+        def get_distance(ix: int) -> float:
+            dist = path_distance[ix, 1]
+            return max(abs(dist - start_dist), track_length / 2)
+
+        # Use heap for distance-based ordering
+        path_heap: List[Tuple[float, int]] = [(0.0, start_ix)]
+
+        while path_heap and (max_paths is None or count < max_paths):
+            _, current = heapq.heappop(path_heap)
+
+            if current in visited:
+                continue
+            visited.add(current)
+            yield current
+            count += 1
+
+            for succ in self.successors[current]:
+                if succ not in visited:
+                    heapq.heappush(path_heap, (get_distance(succ), succ))
+
+    def get_path_indices(
+        self, start_ix: int, max_paths: Optional[int] = None
+    ) -> List[int]:
+        """Get path indices as a list.
+
+        :param start_ix: Starting node index
+        :param max_paths: Maximum number of paths to return (None = all)
+        :return: List of path indices in traversal order
+        """
+        return list(self.iter_path_indices(start_ix, max_paths))
 
 
 @functools.lru_cache
@@ -214,6 +308,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         self.race = None
         self.world = None
         self.current_track = None
+        self.path_cache: Optional[PathCache] = None
 
     def reset_race(
         self,
@@ -283,62 +378,85 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         assert self.world is not None
 
         kart: pystk2.Kart = self.world.karts[kart_ix]
+        kart_location = np.array(kart.location, dtype=np.float32)
+        kart_rotation = np.array(kart.rotation, dtype=np.float32)
 
         def kartview(x):
-            """Returns a vector in the kart frame
+            """Returns a vector in the kart frame (single vector version)."""
+            return rotate(
+                np.asarray(x, dtype=np.float32) - kart_location, kart_rotation
+            )
 
-            X right, Y up, Z forwards
-            """
-            return rotate(x - kart.location, kart.rotation)
+        def kartview_batch(positions: np.ndarray) -> np.ndarray:
+            """Returns vectors in the kart frame (batch version)."""
+            return rotate_batch(positions - kart_location, kart_rotation)
 
         # Use STK to get the kart path index
         path_ix = kart.node
 
-        def list_permute(list, sort_ix):
-            list[:] = (list[ix] for ix in sort_ix)
-
-        def sort_closest(positions, *lists):
+        def sort_closest_batch(positions: np.ndarray, *lists):
+            """Sort positions by distance, with positive z (front) first."""
             # z axis is front
-            distances = [np.linalg.norm(p) * np.sign(p[2]) for p in positions]
+            norms = np.linalg.norm(positions, axis=1)
+            signs = np.sign(positions[:, 2])
+            distances = norms * signs
 
             # Change distances: if d < 0, d <- -d+max_d+1
-            # so that negative distances are after positives ones
-            max_d = max(distances)
-            distances_2 = [d if d >= 0 else -d + max_d + 1 for d in distances]
+            # so that negative distances are after positive ones
+            if len(distances) > 0:
+                max_d = np.max(distances)
+                distances = np.where(distances >= 0, distances, -distances + max_d + 1)
+                sorted_ix = np.argsort(distances)
+                positions = positions[sorted_ix]
+                lists = tuple(lst[sorted_ix] for lst in lists)
 
-            sorted_ix = np.argsort(distances_2)
+            return positions, lists
 
-            list_permute(positions, sorted_ix)
-            for list in lists:
-                list_permute(list, sorted_ix)
-
-        # Sort items and karts by decreasing
-        karts_position = [
-            kartview(other_kart.location)
-            for ix, other_kart in enumerate(self.world.karts)
-            if ix != kart_ix
-        ]
-        sort_closest(karts_position)
-
-        items_position = [kartview(item.location) for item in self.world.items]
-        items_type = [item.type.value for item in self.world.items]
-        sort_closest(items_position, items_type)
-
-        # Distance from center of track
-        start, end = kartview(self.track.path_nodes[path_ix][0]), kartview(
-            self.track.path_nodes[path_ix][1]
+        # --- Other karts (vectorized) ---
+        other_kart_locs = np.array(
+            [k.location for ix, k in enumerate(self.world.karts) if ix != kart_ix],
+            dtype=np.float32,
         )
+        if len(other_kart_locs) > 0:
+            karts_position = kartview_batch(other_kart_locs)
+            karts_position, _ = sort_closest_batch(karts_position)
+        else:
+            karts_position = np.empty((0, 3), dtype=np.float32)
+
+        # --- Items (vectorized) ---
+        if len(self.world.items) > 0:
+            items_locs = np.array(
+                [item.location for item in self.world.items], dtype=np.float32
+            )
+            items_type = np.array(
+                [item.type.value for item in self.world.items], dtype=np.int32
+            )
+            items_position = kartview_batch(items_locs)
+            items_position, (items_type,) = sort_closest_batch(
+                items_position, items_type
+            )
+        else:
+            items_position = np.empty((0, 3), dtype=np.float32)
+            items_type = np.array([], dtype=np.int32)
+
+        # --- Distance from center of track ---
+        path_node = self.track.path_nodes[path_ix]
+        path_endpoints = np.array([path_node[0], path_node[1]], dtype=np.float32)
+        path_in_kart = kartview_batch(path_endpoints)
+        start, end = path_in_kart[0], path_in_kart[1]
 
         s_e = start - end
-        x_orth = np.dot(s_e, start) * s_e / np.linalg.norm(s_e) ** 2 - start
-
-        center_path_distance = np.linalg.norm(x_orth) * np.sign(x_orth[0])
+        s_e_norm_sq = np.dot(s_e, s_e)
+        if s_e_norm_sq > 0:
+            x_orth = np.dot(s_e, start) * s_e / s_e_norm_sq - start
+            center_path_distance = np.linalg.norm(x_orth) * np.sign(x_orth[0])
+        else:
+            x_orth = np.zeros(3, dtype=np.float32)
+            center_path_distance = 0.0
 
         # Add action if using AI bot
-        # (this corresponds to the action before the observation)
         obs = {}
         if use_ai:
-            # Adds actions
             action = self._stk.get_kart_action(kart_ix)
             obs = {
                 "action": {
@@ -352,39 +470,25 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
                 }
             }
 
-        # --- Sets up the list of nodes to output
-        # (1) Set the maximum number of nodes
-        if self.max_paths is not None:
-            path_size = min(len(self.track.path_distance), self.max_paths)
+        # --- Path indices from cache ---
+        path_indices = self.path_cache.get_path_indices(path_ix, self.max_paths)
+
+        # --- Path positions (vectorized) ---
+        num_paths = len(path_indices)
+        if num_paths > 0:
+            # Collect all path start/end points
+            path_starts = np.array(
+                [self.track.path_nodes[ix][0] for ix in path_indices], dtype=np.float32
+            )
+            path_ends = np.array(
+                [self.track.path_nodes[ix][1] for ix in path_indices], dtype=np.float32
+            )
+            # Transform to kart view in batch
+            paths_start = kartview_batch(path_starts)
+            paths_end = kartview_batch(path_ends)
         else:
-            path_size = len(self.track.path_distance)
-
-        # Iterate by using the successor and path
-        # distance to break ties
-
-        _self = self
-
-        class PathComponent:
-            def __init__(self, ix):
-                self.ix = ix
-                # Distance from the kart node start
-                start: float = _self.track.path_distance[self.ix, 1]
-                self.distance = np.maximum(
-                    np.abs(start - _self.track.path_distance[path_ix, 1]),
-                    _self.track.length / 2,
-                )
-
-            def __lt__(self, other: "PathComponent"):
-                return self.distance < other.distance
-
-        path_indices: list[int] = []
-        path_heap: list[int] = [PathComponent(path_ix)]
-        for _ in range(path_size):
-            path = heapq.heappop(path_heap)
-            path_indices.append(path.ix)
-
-            for succ_ix in self.track.successors[path.ix]:
-                heapq.heappush(path_heap, PathComponent(succ_ix))
+            paths_start = np.empty((0, 3), dtype=np.float32)
+            paths_end = np.empty((0, 3), dtype=np.float32)
 
         return {
             **obs,
@@ -410,7 +514,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             "front": kartview(kart.front),
             # path center
             "center_path_distance": np.array([center_path_distance], dtype=np.float32),
-            "center_path": np.array(x_orth),
+            "center_path": np.array(x_orth, dtype=np.float32),
             # Items (kart point of view)
             "items_position": tuple(items_position),
             "items_type": tuple(items_type),
@@ -421,12 +525,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
                 self.track.path_distance[ix] for ix in path_indices
             ),
             "paths_width": tuple(self.track.path_width[ix] for ix in path_indices),
-            "paths_start": tuple(
-                kartview(self.track.path_nodes[ix][0]) for ix in path_indices
-            ),
-            "paths_end": tuple(
-                kartview(self.track.path_nodes[ix][1]) for ix in path_indices
-            ),
+            "paths_start": tuple(paths_start),
+            "paths_end": tuple(paths_end),
         }
 
     def render(self):
@@ -439,6 +539,9 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
     def warmup_race(self):
         self.track = self._stk.warmup_race(self.config)
         assert len(self.track.successors) == len(self.track.path_nodes)
+
+        # Get path cache (globally cached by track name)
+        self.path_cache = get_path_cache(self.current_track, self.track)
 
     def close(self):
         self._stk.close()
