@@ -122,3 +122,132 @@ def test_vecenv_shared_memory_auto_detection():
         assert _has_dynamic_spaces(env_full.observation_space)
     finally:
         env_full.close()
+
+
+# --- Multi-agent VecEnv tests ---
+
+
+@pytest.mark.parametrize("num_envs", [1, 2])
+def test_vecenv_multi_agent_creation(num_envs):
+    """Test that multi-agent VecEnv can be created."""
+    from pystk2_gymnasium import AgentSpec
+
+    vec_env = None
+    try:
+        vec_env = pystk2_gymnasium.make_stkrace_vec(
+            num_envs=num_envs,
+            env_id="supertuxkart/multi-full-v0",
+            env_kwargs={
+                "num_kart": 3,
+                "agents": [AgentSpec(), AgentSpec()],
+            },
+        )
+        assert vec_env.num_envs == num_envs
+    finally:
+        if vec_env is not None:
+            vec_env.close()
+
+
+def test_vecenv_multi_agent_reset():
+    """Test that multi-agent VecEnv reset returns correct structure."""
+    from pystk2_gymnasium import AgentSpec
+
+    num_envs = 2
+    num_agents = 2
+    vec_env = None
+    try:
+        vec_env = pystk2_gymnasium.make_stkrace_vec(
+            num_envs=num_envs,
+            env_id="supertuxkart/multi-full-v0",
+            env_kwargs={
+                "num_kart": 3,
+                "agents": [AgentSpec() for _ in range(num_agents)],
+            },
+        )
+
+        observations, infos = vec_env.reset()
+
+        # Multi-agent: observations is a dict keyed by agent index
+        assert isinstance(observations, dict)
+        # Should have keys for each agent ("0", "1")
+        assert "0" in observations
+        assert "1" in observations
+
+        # Each agent's observations should be batched across environments
+        assert observations["0"]["phase"].shape[0] == num_envs
+        assert observations["1"]["phase"].shape[0] == num_envs
+    finally:
+        if vec_env is not None:
+            vec_env.close()
+
+
+def test_vecenv_multi_agent_step():
+    """Test that multi-agent VecEnv step works correctly."""
+    from pystk2_gymnasium import AgentSpec
+
+    num_envs = 2
+    num_agents = 2
+    vec_env = None
+    try:
+        vec_env = pystk2_gymnasium.make_stkrace_vec(
+            num_envs=num_envs,
+            env_id="supertuxkart/multi-full-v0",
+            env_kwargs={
+                "num_kart": 3,
+                "agents": [AgentSpec() for _ in range(num_agents)],
+            },
+        )
+
+        vec_env.reset()
+
+        # Sample actions for all environments
+        actions = vec_env.action_space.sample()
+        observations, rewards, terminations, truncations, infos = vec_env.step(actions)
+
+        # Check observation structure
+        assert isinstance(observations, dict)
+        assert "0" in observations
+        assert "1" in observations
+        assert observations["0"]["phase"].shape[0] == num_envs
+
+        # Check rewards, terminations, truncations shapes
+        assert rewards.shape == (num_envs,)
+        assert terminations.shape == (num_envs,)
+        assert truncations.shape == (num_envs,)
+    finally:
+        if vec_env is not None:
+            vec_env.close()
+
+
+def test_vecenv_multi_agent_multiple_steps():
+    """Test running multiple steps in multi-agent VecEnv."""
+    from pystk2_gymnasium import AgentSpec
+
+    num_envs = 2
+    num_agents = 2
+    vec_env = None
+    try:
+        vec_env = pystk2_gymnasium.make_stkrace_vec(
+            num_envs=num_envs,
+            env_id="supertuxkart/multi-full-v0",
+            env_kwargs={
+                "num_kart": 3,
+                "agents": [AgentSpec() for _ in range(num_agents)],
+            },
+        )
+
+        vec_env.reset()
+
+        for _ in range(5):
+            actions = vec_env.action_space.sample()
+            observations, rewards, terminations, truncations, infos = vec_env.step(
+                actions
+            )
+
+            # Basic sanity checks
+            assert observations["0"]["phase"].shape[0] == num_envs
+            assert observations["1"]["phase"].shape[0] == num_envs
+            assert np.isfinite(rewards).all()
+    finally:
+        if vec_env is not None:
+            vec_env.close()
