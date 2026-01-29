@@ -1,8 +1,10 @@
 """Race command: load agents, run a race, output results."""
 
 import importlib
+import importlib.util
 import json
 import logging
+import math
 import signal
 import sys
 import tempfile
@@ -13,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 import gymnasium as gym
+import numpy as np
 
 from pystk2_gymnasium.definitions import AgentException, AgentSpec
 
@@ -184,6 +187,66 @@ def _call_with_timeout(func, args, timeout: Optional[float]):
     return result
 
 
+def _tile_frames(frames):
+    """Tile a list of HxWx3 numpy arrays into a grid."""
+    n = len(frames)
+    if n == 1:
+        return frames[0]
+    ncols = math.ceil(math.sqrt(n))
+    nrows = math.ceil(n / ncols)
+    while len(frames) < nrows * ncols:
+        frames.append(np.zeros_like(frames[0]))
+    rows = []
+    for r in range(nrows):
+        rows.append(np.concatenate(frames[r * ncols : (r + 1) * ncols], axis=1))
+    return np.concatenate(rows, axis=0)
+
+
+def _load_adapter(path):
+    """Load a wrap_actor function from a Python file."""
+    spec = importlib.util.spec_from_file_location("pystk2_adapter", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, "wrap_actor"):
+        raise AttributeError(f"Adapter file {path} must define a wrap_actor function")
+    return module.wrap_actor
+
+
+def _configure_recording(args, env_kwargs):
+    """Configure env_kwargs for race recording."""
+    import pystk2
+
+    gfx = pystk2.GraphicsConfig.hd()
+    if args.hide:
+        gfx.display = False
+    env_kwargs["graphics_config"] = gfx
+    env_kwargs["use_subprocess"] = False
+    env_kwargs["num_cameras"] = min(args.cameras or args.num_karts, 8)
+
+
+_CODEC_MAP = {
+    ".mp4": "libx264",
+    ".mkv": "libx264",
+    ".avi": "mpeg4",
+    ".webm": "libvpx",
+    ".ogv": "libtheora",
+    ".mov": "libx264",
+}
+
+
+def _save_recording(recorded_frames, record_path, fps):
+    """Write recorded frames to a video file."""
+    if not recorded_frames:
+        return
+    from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
+
+    path = Path(record_path)
+    codec = _CODEC_MAP.get(path.suffix.lower(), "libx264")
+    clip = ImageSequenceClip(recorded_frames, fps=fps)
+    clip.write_videofile(str(path), codec=codec, logger=None)
+    logger.info("Saved %d frames to %s", len(recorded_frames), path)
+
+
 def run_race(args):
     """Run a race with the given CLI arguments."""
     temp_dirs = []
@@ -228,6 +291,10 @@ def _run_race_inner(args, temp_dirs: list):
     if args.track is not None:
         env_kwargs["track"] = args.track
 
+    # --- Recording setup ---
+    if args.record:
+        _configure_recording(args, env_kwargs)
+
     env = gym.make("supertuxkart/multi-full-v0", **env_kwargs)
 
     # --- Apply per-agent wrappers ---
@@ -237,6 +304,9 @@ def _run_race_inner(args, temp_dirs: list):
 
     env = MonoAgentWrapperAdapter(env, wrapper_factories=wrapper_factories)
 
+    # --- Load adapter if specified ---
+    wrap_actor = _load_adapter(args.adapter) if args.adapter else None
+
     # --- Create actors (deferred: needs obs/action spaces) ---
     actors = []
     for ix, la in enumerate(loaded_agents):
@@ -244,6 +314,8 @@ def _run_race_inner(args, temp_dirs: list):
         obs_space = env.observation_space[key]
         act_space = env.action_space[key]
         actor = la.get_actor(la.state, obs_space, act_space)
+        if wrap_actor is not None:
+            actor = wrap_actor(actor, obs_space, act_space)
         actors.append(actor)
         logger.info("Created actor for agent %d (%s)", ix, la.player_name)
 
@@ -271,7 +343,10 @@ def _run_race_inner(args, temp_dirs: list):
     # --- Race loop ---
     catch_errors = args.error_handling == "catch"
     action_timeout = args.action_timeout
+    max_steps = args.max_steps
     controller = web_server.controller if web_server is not None else None
+
+    recorded_frames = [] if args.record else None
 
     obs, info = env.reset()
     done = False
@@ -312,6 +387,15 @@ def _run_race_inner(args, temp_dirs: list):
             obs, reward, terminated, truncated, info = env.step(actions)
             step_count += 1
             done = terminated or truncated
+            if max_steps is not None and step_count >= max_steps:
+                done = True
+
+            # Capture frames for recording
+            if recorded_frames is not None:
+                render_data = env.unwrapped._stk.race.render_data
+                cam_images = [np.array(rd.image) for rd in render_data]
+                if cam_images:
+                    recorded_frames.append(_tile_frames(cam_images))
 
             # Accumulate per-agent rewards
             agent_rewards = info.get("reward", {})
@@ -326,6 +410,9 @@ def _run_race_inner(args, temp_dirs: list):
     finally:
         elapsed = time.time() - start_time
         env.close()
+
+        if recorded_frames:
+            _save_recording(recorded_frames, args.record, args.fps)
 
     # --- Build results ---
     agent_infos = info.get("infos", {})

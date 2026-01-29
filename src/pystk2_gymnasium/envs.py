@@ -253,12 +253,14 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
     #: STK interface (either subprocess or direct)
     _stk: STKInterface = None
 
-    def initialize(self, with_graphics: bool, use_subprocess: bool = True):
+    def initialize(
+        self, with_graphics: bool, use_subprocess: bool = True, graphics_config=None
+    ):
         if self._stk is None:
             if use_subprocess:
                 self._stk = PySTKProcess(with_graphics)
             else:
-                self._stk = DirectSTKInterface(with_graphics)
+                self._stk = DirectSTKInterface(with_graphics, graphics_config)
 
         if not BaseSTKRaceEnv.TRACKS:
             BaseSTKRaceEnv.TRACKS = self._stk.list_tracks()
@@ -277,6 +279,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         laps: int = 1,
         difficulty: int = 2,
         use_subprocess: bool = True,
+        num_cameras: int = 0,
+        graphics_config=None,
     ):
         """Creates a new race
 
@@ -290,12 +294,16 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         :param use_subprocess: If True, run STK in a subprocess (default).
             If False, run STK directly in the current process. Use False when
             running inside AsyncVectorEnv workers.
+        :param num_cameras: Number of race cameras (default 0, max 8)
+        :param graphics_config: Optional pystk2.GraphicsConfig to use instead
+            of the default derived from render_mode
         """
         super().__init__()
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
-        self.initialize(render_mode == "human", use_subprocess)
+        self.num_cameras = num_cameras
+        self.initialize(render_mode == "human", use_subprocess, graphics_config)
 
         # Setup the variables
         self.default_track = track
@@ -331,6 +339,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             track=self.current_track,
             laps=self.laps,
         )
+        if self.num_cameras > 0:
+            self.config.num_cameras = self.num_cameras
 
         for ix in range(self.num_kart):
             if ix > 0:

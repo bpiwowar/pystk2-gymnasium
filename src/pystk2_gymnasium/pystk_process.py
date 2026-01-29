@@ -49,13 +49,15 @@ class DirectSTKInterface:
     race: Optional[pystk2.Race] = None
     _initialized: bool = False
 
-    def __init__(self, with_graphics: bool):
+    def __init__(self, with_graphics: bool, graphics_config=None):
         if not DirectSTKInterface._initialized:
-            pystk2.init(
-                pystk2.GraphicsConfig.hd()
-                if with_graphics
-                else pystk2.GraphicsConfig.none()
-            )
+            if graphics_config is None:
+                graphics_config = (
+                    pystk2.GraphicsConfig.hd()
+                    if with_graphics
+                    else pystk2.GraphicsConfig.none()
+                )
+            pystk2.init(graphics_config)
             DirectSTKInterface._initialized = True
 
     def list_tracks(self) -> List[str]:

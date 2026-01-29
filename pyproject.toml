@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "PySuperTuxKart2>=0.5.1",
+    "PySuperTuxKart2>=0.6.1",
     "gymnasium>0.29.0",
     "numba",
 ]
@@ -33,6 +33,7 @@ pystk2 = "pystk2_gymnasium.cli:main"
 [project.optional-dependencies]
 cli = ["torch"]
 web = ["dash", "plotly"]
+record = ["moviepy"]
 
 [project.urls]
 Homepage = "https://github.com/bpiwowar/pystk2-gymnasium"

@@ -87,6 +87,38 @@ def main():
         default=8050,
         help="Port for the web dashboard (default: 8050)",
     )
+    race_parser.add_argument(
+        "--record",
+        type=str,
+        metavar="FILE",
+        default=None,
+        help="Save race video to FILE (e.g. race.mp4). All cameras tiled into one video.",
+    )
+    race_parser.add_argument(
+        "--cameras",
+        type=int,
+        default=None,
+        help="Number of cameras (max 8, default: min(num_karts, 8) when recording)",
+    )
+    race_parser.add_argument(
+        "--fps",
+        type=int,
+        default=20,
+        help="Video frame rate (default: 20)",
+    )
+    race_parser.add_argument(
+        "--adapter",
+        type=str,
+        metavar="PATH",
+        default=None,
+        help="Python file providing wrap_actor(actor, obs_space, act_space)",
+    )
+    race_parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Maximum number of steps before stopping the race (default: no limit)",
+    )
 
     args = parser.parse_args()
 
