@@ -15,19 +15,25 @@ import torch
 def get_action(workspace, t):
     """Extract action from a BBRL workspace at timestep t.
 
-    Handles both tensor and dict (nested) action formats.
+    Handles both tensor and nested dict action formats.
+    Supports arbitrarily nested keys like ``action/group/steer``.
     """
-    keys = [k for k in workspace.keys() if k.startswith("action")]
-    if len(keys) == 1 and keys[0] == "action":
-        return workspace.get("action", t)
+    name = "action"
+    if name in workspace.variables:
+        return workspace.get(name, t)
 
-    # Nested dict action: keys like "action/steer", "action/acceleration", etc.
+    # Nested dict action: keys like "action/steer", "action/group/steer", etc.
     action = {}
-    prefix = "action/"
-    for k in keys:
-        if k.startswith(prefix):
-            name = k[len(prefix) :]
-            action[name] = workspace.get(k, t)
+    prefix = f"{name}/"
+    len_prefix = len(prefix)
+    for varname in workspace.variables:
+        if not varname.startswith(prefix):
+            continue
+        keys = varname[len_prefix:].split("/")
+        current = action
+        for key in keys[:-1]:
+            current = current.setdefault(key, {})
+        current[keys[-1]] = workspace.get(varname, t)
     return action
 
 
@@ -46,37 +52,34 @@ def wrap_actor(actor, obs_space, act_space):
     :param act_space: The action space
     :returns: A callable that takes an observation dict and returns an action
     """
+    from bbrl.agents.gymnasium import ParallelGymAgent
     from bbrl.workspace import Workspace
 
-    try:
-        from bbrl_gymnasium.agents.gymnasium import ParallelGymAgent
-    except ImportError:
-        from bbrl_gymnasium.agents.gymagent import ParallelGymAgent
+    # Put the agent in inference mode (disables dropout, etc.)
+    actor.train(False)
 
     workspace = Workspace()
     t = [0]  # mutable counter
 
     def call(obs):
         # Format observation into workspace
+        # _format_frame already adds the batch dimension
         formatted = ParallelGymAgent._format_frame(obs)
         for key, value in formatted.items():
             if not isinstance(value, torch.Tensor):
                 value = torch.tensor(value)
-            # Add batch dimension
-            if value.dim() == 0:
-                value = value.unsqueeze(0)
-            else:
-                value = value.unsqueeze(0)
             workspace.set(f"env/{key}", t[0], value)
 
-        # Run the BBRL agent
-        actor(workspace, t=t[0])
+        # Run the BBRL agent (no gradient needed for inference)
+        with torch.no_grad():
+            actor(workspace, t=t[0])
 
-        # Extract action
+        # Extract action and remove batch dimension
         action = get_action(workspace, t[0])
         t[0] += 1
 
-        # Remove batch dimension
-        return dict_slice(0, action)
+        if isinstance(action, dict):
+            return dict_slice(0, action)
+        return action[0]
 
     return call

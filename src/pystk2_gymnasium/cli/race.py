@@ -39,12 +39,28 @@ class LoadedAgent:
 
 
 def _load_module_from_path(path: Path):
-    """Load pystk_actor module from a directory path."""
+    """Load pystk_actor module from a directory path.
+
+    If the directory is a Python package (contains __init__.py), uses
+    importlib to support relative imports (e.g. ``from .actors import ...``).
+    Otherwise, loads pystk_actor.py directly via spec_from_file_location.
+    """
     actor_path = path / "pystk_actor.py"
     if not actor_path.exists():
         raise FileNotFoundError(f"No pystk_actor.py found in {path}")
 
-    import importlib.util
+    if (path / "__init__.py").exists():
+        # Package with relative imports: use importlib with parent on sys.path
+        parent = str(path.resolve().parent)
+        pkg_name = path.name
+        added = parent not in sys.path
+        if added:
+            sys.path.insert(0, parent)
+        try:
+            return importlib.import_module(f"{pkg_name}.pystk_actor")
+        finally:
+            if added:
+                sys.path.remove(parent)
 
     spec = importlib.util.spec_from_file_location("pystk_actor", str(actor_path))
     module = importlib.util.module_from_spec(spec)
@@ -106,19 +122,24 @@ def load_agent(
         module = _load_module_from_path(extract_dir)
         state = _load_weights(extract_dir)
 
-    elif path.is_dir():
+    elif path.is_dir() and (path / "pystk_actor.py").exists():
         module = _load_module_from_path(path)
         state = _load_weights(path)
 
     else:
-        # Try as Python module name
+        # Try as Python module name (e.g. "stk_actor" on PYTHONPATH)
         try:
             full_module = f"{source}.pystk_actor"
             module = importlib.import_module(full_module)
-        except ImportError:
-            # Maybe the source itself is the module
+        except ModuleNotFoundError as e:
+            # Only fall back if the pystk_actor submodule itself is missing,
+            # not if a transitive dependency (e.g. stable_baselines3) is missing
+            if e.name != full_module:
+                raise
             module = importlib.import_module(source)
-        state = None
+        # Load weights from the module's directory
+        module_dir = Path(module.__file__).parent
+        state = _load_weights(module_dir)
 
     env_name = getattr(module, "env_name", "supertuxkart/full-v0")
     player_name = name_override or getattr(module, "player_name", source)
@@ -149,17 +170,20 @@ def _build_wrapper_factory(loaded: LoadedAgent):
 
     wrapper_specs = list(env_spec.additional_wrappers or [])
 
-    # Add extra wrappers from the agent
+    # Collect extra wrappers from the agent (callables, not WrapperSpecs)
+    extra_wrappers = []
     if loaded.get_wrappers is not None:
-        extra = loaded.get_wrappers()
-        if extra:
-            wrapper_specs.extend(extra)
+        extra_wrappers = loaded.get_wrappers() or []
 
     def factory(env):
         wrapped = env
+        # Apply registered env wrappers (WrapperSpec objects)
         for ws in wrapper_specs:
             wrapper_cls = load_env_creator(ws.entry_point)
             wrapped = wrapper_cls(wrapped, **(ws.kwargs or {}))
+        # Apply agent-provided wrappers (callables)
+        for wrapper_fn in extra_wrappers:
+            wrapped = wrapper_fn(wrapped)
         return wrapped
 
     return factory
