@@ -9,6 +9,7 @@ import signal
 import sys
 import tempfile
 import time
+import traceback
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -271,24 +272,69 @@ def _save_recording(recorded_frames, record_path, fps):
     logger.info("Saved %d frames to %s", len(recorded_frames), path)
 
 
+def _create_actors(loaded_agents, env, wrap_actor):
+    """Create actor callables from loaded agents, wrapping errors."""
+    actors = []
+    for ix, la in enumerate(loaded_agents):
+        key = str(ix)
+        obs_space = env.observation_space[key]
+        act_space = env.action_space[key]
+        try:
+            actor = la.get_actor(la.state, obs_space, act_space)
+            if wrap_actor is not None:
+                actor = wrap_actor(actor, obs_space, act_space)
+        except Exception as exc:
+            raise AgentException("Exception when initializing the actor", key) from exc
+        actors.append(actor)
+        logger.info("Created actor for agent %d (%s)", ix, la.player_name)
+    return actors
+
+
+def _output_message(message, args):
+    """Output a JSON message (results or error) to file and/or logger."""
+    message_json = json.dumps(message, indent=2)
+    logger.info("Race output:\n%s", message_json)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.write_text(message_json)
+        logger.info("Written to %s", output_path)
+
+
 def run_race(args):
     """Run a race with the given CLI arguments."""
     temp_dirs = []
+    player_names = []
     try:
-        _run_race_inner(args, temp_dirs)
+        _run_race_inner(args, temp_dirs, player_names)
+    except AgentException as e:
+        cause = e if e.__cause__ is None else e.__cause__
+        tb = traceback.extract_tb(cause.__traceback__)
+        key = int(e.key) if e.key is not None else -1
+        message = {
+            "type": "error",
+            "key": key,
+            "name": player_names[key] if key < len(player_names) else "?",
+            "when": str(e),
+            "message": str(cause),
+            "traceback": traceback.format_list(tb),
+        }
+        _output_message(message, args)
     finally:
         for td in temp_dirs:
             td.cleanup()
 
 
-def _run_race_inner(args, temp_dirs: list):
+def _run_race_inner(args, temp_dirs: list, player_names: list):
     from pystk2_gymnasium.wrappers import MonoAgentWrapperAdapter
 
     # --- Load agents ---
     loaded_agents: List[LoadedAgent] = []
-    for source in args.agents:
+    for ix, source in enumerate(args.agents):
         logger.info("Loading agent from %s", source)
-        agent = load_agent(source, temp_dirs)
+        try:
+            agent = load_agent(source, temp_dirs)
+        except Exception as exc:
+            raise AgentException("Exception when loading module", str(ix)) from exc
         logger.info(
             "Loaded agent %r (env=%s) from %s",
             agent.player_name,
@@ -296,6 +342,7 @@ def _run_race_inner(args, temp_dirs: list):
             source,
         )
         loaded_agents.append(agent)
+        player_names.append(agent.player_name)
 
     num_agents = len(loaded_agents)
 
@@ -332,16 +379,7 @@ def _run_race_inner(args, temp_dirs: list):
     wrap_actor = _load_adapter(args.adapter) if args.adapter else None
 
     # --- Create actors (deferred: needs obs/action spaces) ---
-    actors = []
-    for ix, la in enumerate(loaded_agents):
-        key = str(ix)
-        obs_space = env.observation_space[key]
-        act_space = env.action_space[key]
-        actor = la.get_actor(la.state, obs_space, act_space)
-        if wrap_actor is not None:
-            actor = wrap_actor(actor, obs_space, act_space)
-        actors.append(actor)
-        logger.info("Created actor for agent %d (%s)", ix, la.player_name)
+    actors = _create_actors(loaded_agents, env, wrap_actor)
 
     # --- Optional web visualization ---
     web_server = None
@@ -371,6 +409,7 @@ def _run_race_inner(args, temp_dirs: list):
     controller = web_server.controller if web_server is not None else None
 
     recorded_frames = [] if args.record else None
+    action_times = [[] for _ in range(num_agents)]
 
     obs, info = env.reset()
     done = False
@@ -392,7 +431,9 @@ def _run_race_inner(args, temp_dirs: list):
             for ix, actor in enumerate(actors):
                 key = str(ix)
                 try:
+                    t_start = time.perf_counter()
                     action = _call_with_timeout(actor, (obs[key],), action_timeout)
+                    action_times[ix].append(time.perf_counter() - t_start)
                     actions[key] = action
                 except Exception as exc:
                     if not catch_errors:
@@ -440,32 +481,33 @@ def _run_race_inner(args, temp_dirs: list):
 
     # --- Build results ---
     agent_infos = info.get("infos", {})
-    results = {
+    rewards = info.get("reward", {})
+    results_payload = []
+    message = {
+        "type": "results",
         "track": getattr(env.unwrapped, "current_track", args.track),
         "steps": step_count,
         "elapsed_seconds": round(elapsed, 2),
-        "agents": [],
+        "results": results_payload,
     }
     for ix, la in enumerate(loaded_agents):
         key = str(ix)
         agent_info = agent_infos.get(key, {})
-        results["agents"].append(
+        avg_action_time = float(np.mean(action_times[ix])) if action_times[ix] else 0.0
+        results_payload.append(
             {
-                "index": ix,
+                "key": ix,
                 "name": la.player_name,
-                "source": la.source,
-                "env_name": la.env_name,
-                "total_reward": round(total_rewards.get(key, 0.0), 4),
+                "reward": rewards.get(key, total_rewards.get(key, 0.0)),
                 "position": agent_info.get("position", None),
-                "distance": agent_info.get("distance", None),
+                "avg_action_time": avg_action_time,
             }
         )
+        logger.info(
+            "Agent %d (%s): avg action time = %.4fs",
+            ix,
+            la.player_name,
+            avg_action_time,
+        )
 
-    # --- Output results ---
-    results_json = json.dumps(results, indent=2)
-    logger.info("Race results:\n%s", results_json)
-
-    if args.output:
-        output_path = Path(args.output)
-        output_path.write_text(results_json)
-        logger.info("Results written to %s", output_path)
+    _output_message(message, args)
