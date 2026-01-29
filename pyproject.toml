@@ -27,6 +27,13 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+pystk2 = "pystk2_gymnasium.cli:main"
+
+[project.optional-dependencies]
+cli = ["torch"]
+web = ["dash", "plotly"]
+
 [project.urls]
 Homepage = "https://github.com/bpiwowar/pystk2-gymnasium"
 Repository = "https://github.com/bpiwowar/pystk2-gymnasium"
