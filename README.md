@@ -161,6 +161,120 @@ make_stkenv = partial(
 )
 ```
 
+## CLI Commands
+
+The `pystk2` command-line tool provides commands for running races locally or in a distributed client-server setup.
+
+### `pystk2 race` — Run a local race
+
+Runs a race with one or more agents loaded locally.
+
+```bash
+pystk2 race agent1.zip agent2.zip --num-karts 5 --track lighthouse --laps 2
+```
+
+**Positional arguments:**
+- `agents` — One or more agent sources: path to a zip file, a directory containing `pystk_actor.py`, or a Python module name. Append `@:Name` to override the player name (e.g. `agent.zip@:Alice`).
+
+**Options:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--num-karts` | 3 | Total number of karts in the race |
+| `--track` | random | Track name |
+| `--laps` | 1 | Number of laps |
+| `--max-paths` | unlimited | Maximum path nodes ahead in observations |
+| `--output FILE` | — | Write JSON race results to file |
+| `--error-handling` | `raise` | `raise` to propagate agent errors, `catch` to use random actions |
+| `--action-timeout` | none | Per-action timeout in seconds (Unix only) |
+| `--hide` | off | Run without graphics (headless) |
+| `--web` | off | Enable web visualization dashboard (requires `dash`/`plotly`) |
+| `--web-port` | 8050 | Port for the web dashboard |
+| `--record FILE` | — | Save race video (e.g. `race.mp4`) |
+| `--cameras` | auto | Number of cameras (max 8) |
+| `--fps` | 20 | Video frame rate |
+| `--adapter PATH` | — | Python file providing a custom `create_actor` function |
+| `--max-steps` | unlimited | Maximum steps before stopping |
+
+### `pystk2 race-server` — Start an agent server
+
+Starts a persistent server that loads agents and responds to action requests from a race client over ZMQ. The server stays alive across multiple races until interrupted with Ctrl+C.
+
+```bash
+# Serve one agent
+pystk2 race-server my_agent.zip
+
+# Serve multiple agents on a custom port
+pystk2 race-server agent_a.zip agent_b/ --address tcp://*:5556
+```
+
+Requires `pyzmq`: `pip install pystk2-gymnasium[remote]`
+
+**Positional arguments:**
+- `agents` — One or more agent sources (same format as `pystk2 race`).
+
+**Options:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--address` | `tcp://*:5555` | ZMQ bind address |
+| `--adapter PATH` | — | Python file providing a custom `create_actor` function |
+| `--action-timeout` | none | Per-action timeout in seconds (Unix only) |
+| `--threads` | half CPU cores | Number of worker threads for concurrent client sessions |
+
+### `pystk2 race-client` — Run a race with remote servers
+
+Connects to one or more race servers, runs the STK environment locally, sends observations to each server and receives actions.
+
+```bash
+# Single server
+pystk2 race-client --server tcp://localhost:5555 --num-karts 3 --track lighthouse
+
+# Multiple servers (each student runs their own server)
+pystk2 race-client \
+  --server tcp://student-a:5555 \
+  --server tcp://student-b:5555 \
+  --num-karts 5 --track lighthouse --max-steps 500
+```
+
+Requires `pyzmq`: `pip install pystk2-gymnasium[remote]`
+
+**Options:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--server ADDR` | *(required, repeatable)* | Server address (e.g. `tcp://localhost:5555`) |
+| `--num-karts` | 3 | Total number of karts in the race |
+| `--track` | random | Track name |
+| `--laps` | 1 | Number of laps |
+| `--max-paths` | unlimited | Maximum path nodes ahead in observations |
+| `--output FILE` | — | Write JSON race results to file |
+| `--error-handling` | `raise` | `raise` to propagate agent errors, `catch` to use random actions |
+| `--hide` | off | Run without graphics (headless) |
+| `--web` | off | Enable web visualization dashboard |
+| `--web-port` | 8050 | Port for the web dashboard |
+| `--record FILE` | — | Save race video |
+| `--cameras` | auto | Number of cameras (max 8) |
+| `--fps` | 20 | Video frame rate |
+| `--max-steps` | unlimited | Maximum steps before stopping |
+| `--timeout` | 60 | ZMQ recv timeout per request in seconds |
+
+### Client-server architecture
+
+The client-server mode is designed for settings where each participant runs their own agent server and a race organizer runs the client:
+
+```
+Student A (server)           Student B (server)           Organizer (client)
+pystk2 race-server           pystk2 race-server           pystk2 race-client
+  agent_a.zip                  agent_b.zip                  --server A:5555
+  --address tcp://*:5555       --address tcp://*:5555       --server B:5555
+```
+
+Key design points:
+
+- **Wrappers applied server-side**: The client sends raw observations from the base `supertuxkart/multi-full-v0` environment. Each server builds the full wrapper chain (registered wrappers from `env_name` + agent's `get_wrappers()`) and applies them before calling actors, then un-wraps actions before returning them to the client.
+- **Persistent servers**: Servers stay alive between races. After a client sends `CLOSE`, the server returns to waiting for the next `INIT`.
+- **Concurrent sessions**: The server uses a thread pool (`--threads`) to handle multiple client races simultaneously.
+- **One server = one or more agents**: A single server can load multiple agents.
+- **Protocol**: ZMQ ROUTER/REQ over TCP with pickle serialization.
+
 ## Action and observation space
 
 All the 3D vectors are within the kart referential (`z` front, `x` left, `y`

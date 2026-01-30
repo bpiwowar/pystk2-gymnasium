@@ -37,6 +37,7 @@ class LoadedAgent:
     module_dir: Path  # directory containing pystk_actor.py
     get_wrappers: Optional[Callable]  # () -> list of extra wrappers
     source: str  # original source path/name
+    load_error: Optional[str] = None  # set when the agent failed to load
 
 
 def _load_module_from_path(path: Path):
@@ -190,12 +191,23 @@ def _build_wrapper_factory(loaded: LoadedAgent):
 
 
 def _call_with_timeout(func, args, timeout: Optional[float]):
-    """Call func(*args) with an optional timeout (Unix only via SIGALRM)."""
+    """Call func(*args) with an optional timeout (Unix only via SIGALRM).
+
+    Falls back to a direct call (no timeout) when SIGALRM is unavailable
+    or when called from a non-main thread (signals can only be set in the
+    main thread).
+    """
     if timeout is None:
         return func(*args)
 
     if not hasattr(signal, "SIGALRM"):
         # Non-Unix: just call without timeout
+        return func(*args)
+
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        # SIGALRM only works in the main thread
         return func(*args)
 
     def _handler(signum, frame):
@@ -245,11 +257,29 @@ def _load_adapter(path):
     return module
 
 
+def _apply_graphics_config(args, env_kwargs):
+    """Apply --screen-width / --screen-height to env_kwargs if specified."""
+    import pystk2
+
+    screen_width = getattr(args, "screen_width", None)
+    screen_height = getattr(args, "screen_height", None)
+    if screen_width is not None or screen_height is not None:
+        gfx = env_kwargs.get("graphics_config") or pystk2.GraphicsConfig.hd()
+        if args.hide:
+            gfx.display = False
+        if screen_width is not None:
+            gfx.screen_width = screen_width
+        if screen_height is not None:
+            gfx.screen_height = screen_height
+        env_kwargs["graphics_config"] = gfx
+        env_kwargs["use_subprocess"] = False
+
+
 def _configure_recording(args, env_kwargs):
     """Configure env_kwargs for race recording."""
     import pystk2
 
-    gfx = pystk2.GraphicsConfig.hd()
+    gfx = env_kwargs.get("graphics_config") or pystk2.GraphicsConfig.hd()
     if args.hide:
         gfx.display = False
     env_kwargs["graphics_config"] = gfx
@@ -378,7 +408,8 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
     if args.track is not None:
         env_kwargs["track"] = args.track
 
-    # --- Recording setup ---
+    # --- Graphics / recording setup ---
+    _apply_graphics_config(args, env_kwargs)
     if args.record:
         _configure_recording(args, env_kwargs)
 
