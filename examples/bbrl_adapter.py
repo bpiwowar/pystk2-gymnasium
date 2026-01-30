@@ -15,6 +15,18 @@ import torch
 logger = logging.getLogger("pystk2.adapter.bbrl")
 
 
+def prepare_module_dir(path):
+    """Ensure the agent directory is a proper Python package.
+
+    Legacy BBRL projects may lack ``__init__.py`` while still using
+    relative imports (e.g. ``from .wrappers import ...``).
+    """
+    init_path = Path(path) / "__init__.py"
+    if not init_path.exists():
+        logger.info("Creating missing __init__.py in %s", path)
+        init_path.touch()
+
+
 def get_action(workspace, t):
     """Extract action from a BBRL workspace at timestep t.
 

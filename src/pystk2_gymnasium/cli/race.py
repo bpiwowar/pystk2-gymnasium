@@ -70,13 +70,17 @@ def _load_module_from_path(path: Path):
 
 
 def load_agent(
-    source: str, temp_dirs: List[tempfile.TemporaryDirectory]
+    source: str,
+    temp_dirs: List[tempfile.TemporaryDirectory],
+    prepare_module_dir=None,
 ) -> LoadedAgent:
     """Load an agent from a zip file, directory, or Python module name.
 
     :param source: Path to zip/directory, or a Python module name.
         Supports ``@:CustomName`` suffix to override the player name.
     :param temp_dirs: List to append temp dirs to (kept alive for race duration)
+    :param prepare_module_dir: Optional callback ``(path) -> None`` from the
+        adapter, called on the module directory before importing.
     :returns: LoadedAgent
     """
     # Parse optional name override (e.g. "path/to/agent@:MyName")
@@ -88,10 +92,15 @@ def load_agent(
 
     if path.is_dir() and (path / "stk_actor" / "pystk_actor.py").is_file():
         # Repository root containing stk_actor/ package
-        module = _load_module_from_path(path / "stk_actor")
+        module_dir = path / "stk_actor"
+        if prepare_module_dir:
+            prepare_module_dir(module_dir)
+        module = _load_module_from_path(module_dir)
 
     elif path.is_dir() and (path / "pystk_actor.py").exists():
         # Directory directly containing pystk_actor.py
+        if prepare_module_dir:
+            prepare_module_dir(path)
         module = _load_module_from_path(path)
 
     elif path.is_file() and path.suffix == ".zip":
@@ -218,18 +227,22 @@ def _tile_frames(frames):
 
 
 def _load_adapter(path):
-    """Load a create_actor function from an adapter Python file.
+    """Load an adapter module from a Python file.
 
     The adapter must define ``create_actor(get_actor, module_dir, obs_space,
     act_space)`` which is responsible for loading state, calling get_actor,
     and returning a ready-to-call actor.
+
+    It may also define ``prepare_module_dir(path)`` which is called before
+    loading each agent module, allowing the adapter to prepare the directory
+    (e.g. create missing ``__init__.py`` for legacy projects).
     """
     spec = importlib.util.spec_from_file_location("pystk2_adapter", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not hasattr(module, "create_actor"):
         raise AttributeError(f"Adapter file {path} must define a create_actor function")
-    return module.create_actor
+    return module
 
 
 def _configure_recording(args, env_kwargs):
@@ -267,8 +280,11 @@ def _save_recording(recorded_frames, record_path, fps):
     logger.info("Saved %d frames to %s", len(recorded_frames), path)
 
 
-def _create_actors(loaded_agents, env, create_actor):
+def _create_actors(loaded_agents, env, adapter_module):
     """Create actor callables from loaded agents, wrapping errors."""
+    create_actor = (
+        getattr(adapter_module, "create_actor", None) if adapter_module else None
+    )
     actors = []
     for ix, la in enumerate(loaded_agents):
         key = str(ix)
@@ -323,12 +339,16 @@ def run_race(args):
 def _run_race_inner(args, temp_dirs: list, player_names: list):
     from pystk2_gymnasium.wrappers import MonoAgentWrapperAdapter
 
+    # --- Load adapter if specified (before agents, for prepare_module_dir) ---
+    adapter_module = _load_adapter(args.adapter) if args.adapter else None
+    prepare_module_dir = getattr(adapter_module, "prepare_module_dir", None)
+
     # --- Load agents ---
     loaded_agents: List[LoadedAgent] = []
     for ix, source in enumerate(args.agents):
         logger.info("Loading agent from %s", source)
         try:
-            agent = load_agent(source, temp_dirs)
+            agent = load_agent(source, temp_dirs, prepare_module_dir=prepare_module_dir)
         except Exception as exc:
             raise AgentException("Exception when loading module", str(ix)) from exc
         logger.info(
@@ -371,11 +391,8 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
 
     env = MonoAgentWrapperAdapter(env, wrapper_factories=wrapper_factories)
 
-    # --- Load adapter if specified ---
-    create_actor = _load_adapter(args.adapter) if args.adapter else None
-
     # --- Create actors (deferred: needs obs/action spaces) ---
-    actors = _create_actors(loaded_agents, env, create_actor)
+    actors = _create_actors(loaded_agents, env, adapter_module)
 
     # --- Optional web visualization ---
     web_server = None
