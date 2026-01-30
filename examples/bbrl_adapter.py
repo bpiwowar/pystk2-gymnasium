@@ -1,15 +1,18 @@
 """BBRL adapter for pystk2 race CLI.
 
-Wraps a BBRL Agent into a simple obs -> action callable.
+Handles the full actor creation pipeline for BBRL agents:
+loads weights, calls get_actor, wraps into an obs -> action callable.
 
 Usage:
     pystk2 race --adapter examples/bbrl_adapter.py my_bbrl_agent.zip
-
-The agent's get_actor() should return a BBRL Agent instance.
-This adapter handles workspace creation and action extraction.
 """
 
+import logging
+from pathlib import Path
+
 import torch
+
+logger = logging.getLogger("pystk2.adapter.bbrl")
 
 
 def get_action(workspace, t):
@@ -44,10 +47,11 @@ def dict_slice(k, obj):
     return obj[k]
 
 
-def wrap_actor(actor, obs_space, act_space):
-    """Wrap a BBRL Agent into a callable(obs) -> action.
+def create_actor(get_actor_fn, module_dir, obs_space, act_space):
+    """Create a BBRL actor: load weights, build agent, wrap as callable.
 
-    :param actor: A BBRL Agent instance
+    :param get_actor_fn: The agent's ``get_actor(state, obs_space, act_space)``
+    :param module_dir: Path to the agent module directory
     :param obs_space: The observation space
     :param act_space: The action space
     :returns: A callable that takes an observation dict and returns an action
@@ -55,7 +59,19 @@ def wrap_actor(actor, obs_space, act_space):
     from bbrl.agents.gymnasium import ParallelGymAgent
     from bbrl.workspace import Workspace
 
-    # Put the agent in inference mode (disables dropout, etc.)
+    # Load weights from the agent's module directory
+    pth_path = Path(module_dir) / "pystk_actor.pth"
+    state = None
+    if pth_path.is_file():
+        state = torch.load(str(pth_path), map_location="cpu", weights_only=True)
+        logger.info("Loaded weights from %s", pth_path)
+    else:
+        logger.warning("No pystk_actor.pth in %s", module_dir)
+
+    # Create the BBRL agent
+    actor = get_actor_fn(state, obs_space, act_space)
+
+    # Put in inference mode (disables dropout, etc.)
     actor.train(False)
 
     workspace = Workspace()

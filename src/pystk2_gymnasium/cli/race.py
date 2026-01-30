@@ -13,7 +13,7 @@ import traceback
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Callable, List, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -34,7 +34,7 @@ class LoadedAgent:
     env_name: str
     player_name: str
     get_actor: Callable  # (state, obs_space, act_space) -> actor callable
-    state: Any  # loaded weights or None
+    module_dir: Path  # directory containing pystk_actor.py
     get_wrappers: Optional[Callable]  # () -> list of extra wrappers
     source: str  # original source path/name
 
@@ -67,22 +67,6 @@ def _load_module_from_path(path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _load_weights(path: Path):
-    """Try to load pystk_actor.pth from a directory; returns state or None."""
-    weights_path = path / "pystk_actor.pth"
-    if not weights_path.exists():
-        return None
-    try:
-        import torch
-
-        state = torch.load(str(weights_path), weights_only=True)
-        logger.info("Loaded weights from %s", weights_path)
-        return state
-    except ImportError:
-        logger.warning("torch not available, skipping weights file %s", weights_path)
-        return None
 
 
 def load_agent(
@@ -121,11 +105,9 @@ def load_agent(
             extract_dir = entries[0]
 
         module = _load_module_from_path(extract_dir)
-        state = _load_weights(extract_dir)
 
     elif path.is_dir() and (path / "pystk_actor.py").exists():
         module = _load_module_from_path(path)
-        state = _load_weights(path)
 
     else:
         # Try as Python module name (e.g. "stk_actor" on PYTHONPATH)
@@ -138,10 +120,8 @@ def load_agent(
             if e.name != full_module:
                 raise
             module = importlib.import_module(source)
-        # Load weights from the module's directory
-        module_dir = Path(module.__file__).parent
-        state = _load_weights(module_dir)
 
+    module_dir = Path(module.__file__).parent
     env_name = getattr(module, "env_name", "supertuxkart/full-v0")
     player_name = name_override or getattr(module, "player_name", source)
     get_wrappers = getattr(module, "get_wrappers", None)
@@ -151,7 +131,7 @@ def load_agent(
         env_name=env_name,
         player_name=player_name,
         get_actor=get_actor,
-        state=state,
+        module_dir=module_dir,
         get_wrappers=get_wrappers,
         source=source,
     )
@@ -228,13 +208,18 @@ def _tile_frames(frames):
 
 
 def _load_adapter(path):
-    """Load a wrap_actor function from a Python file."""
+    """Load a create_actor function from an adapter Python file.
+
+    The adapter must define ``create_actor(get_actor, module_dir, obs_space,
+    act_space)`` which is responsible for loading state, calling get_actor,
+    and returning a ready-to-call actor.
+    """
     spec = importlib.util.spec_from_file_location("pystk2_adapter", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if not hasattr(module, "wrap_actor"):
-        raise AttributeError(f"Adapter file {path} must define a wrap_actor function")
-    return module.wrap_actor
+    if not hasattr(module, "create_actor"):
+        raise AttributeError(f"Adapter file {path} must define a create_actor function")
+    return module.create_actor
 
 
 def _configure_recording(args, env_kwargs):
@@ -272,7 +257,7 @@ def _save_recording(recorded_frames, record_path, fps):
     logger.info("Saved %d frames to %s", len(recorded_frames), path)
 
 
-def _create_actors(loaded_agents, env, wrap_actor):
+def _create_actors(loaded_agents, env, create_actor):
     """Create actor callables from loaded agents, wrapping errors."""
     actors = []
     for ix, la in enumerate(loaded_agents):
@@ -280,9 +265,10 @@ def _create_actors(loaded_agents, env, wrap_actor):
         obs_space = env.observation_space[key]
         act_space = env.action_space[key]
         try:
-            actor = la.get_actor(la.state, obs_space, act_space)
-            if wrap_actor is not None:
-                actor = wrap_actor(actor, obs_space, act_space)
+            if create_actor is not None:
+                actor = create_actor(la.get_actor, la.module_dir, obs_space, act_space)
+            else:
+                actor = la.get_actor(la.module_dir, obs_space, act_space)
         except Exception as exc:
             raise AgentException("Exception when initializing the actor", key) from exc
         actors.append(actor)
@@ -376,10 +362,10 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
     env = MonoAgentWrapperAdapter(env, wrapper_factories=wrapper_factories)
 
     # --- Load adapter if specified ---
-    wrap_actor = _load_adapter(args.adapter) if args.adapter else None
+    create_actor = _load_adapter(args.adapter) if args.adapter else None
 
     # --- Create actors (deferred: needs obs/action spaces) ---
-    actors = _create_actors(loaded_agents, env, wrap_actor)
+    actors = _create_actors(loaded_agents, env, create_actor)
 
     # --- Optional web visualization ---
     web_server = None

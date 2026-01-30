@@ -111,7 +111,7 @@ def main():
         type=str,
         metavar="PATH",
         default=None,
-        help="Python file providing wrap_actor(actor, obs_space, act_space)",
+        help="Python file providing create_actor(get_actor, module_dir, obs_space, act_space)",
     )
     race_parser.add_argument(
         "--max-steps",
