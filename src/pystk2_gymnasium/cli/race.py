@@ -86,7 +86,15 @@ def load_agent(
 
     path = Path(source)
 
-    if path.suffix == ".zip" and path.exists():
+    if path.is_dir() and (path / "stk_actor" / "pystk_actor.py").is_file():
+        # Repository root containing stk_actor/ package
+        module = _load_module_from_path(path / "stk_actor")
+
+    elif path.is_dir() and (path / "pystk_actor.py").exists():
+        # Directory directly containing pystk_actor.py
+        module = _load_module_from_path(path)
+
+    elif path.is_file() and path.suffix == ".zip":
         # Extract zip to temp dir
         tmp = tempfile.TemporaryDirectory(prefix="pystk2_agent_")
         temp_dirs.append(tmp)
@@ -106,11 +114,13 @@ def load_agent(
 
         module = _load_module_from_path(extract_dir)
 
-    elif path.is_dir() and (path / "pystk_actor.py").exists():
-        module = _load_module_from_path(path)
+    elif not path.exists():
+        raise FileNotFoundError(
+            f"Agent source not found: {source} (not a valid path or module name)"
+        )
 
     else:
-        # Try as Python module name (e.g. "stk_actor" on PYTHONPATH)
+        # Treat as Python module name (e.g. "stk_actor" on PYTHONPATH)
         try:
             full_module = f"{source}.pystk_actor"
             module = importlib.import_module(full_module)
