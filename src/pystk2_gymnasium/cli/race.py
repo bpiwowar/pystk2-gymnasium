@@ -416,6 +416,8 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
             sys.exit(1)
 
     # --- Race loop ---
+    from tqdm import tqdm
+
     catch_errors = args.error_handling == "catch"
     action_timeout = args.action_timeout
     max_steps = args.max_steps
@@ -427,11 +429,18 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
     obs, info = env.reset()
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
+    finished = set()
     step_count = 0
     start_time = time.time()
 
     if web_server is not None:
         web_server.update(env, obs, info, total_rewards, step_count)
+
+    pbar = tqdm(
+        total=max_steps,
+        desc="Racing",
+        unit="step",
+    )
 
     try:
         while not done:
@@ -468,6 +477,14 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
             if max_steps is not None and step_count >= max_steps:
                 done = True
 
+            # Track which agents have finished
+            agent_terminated = info.get("terminated", {})
+            for key, t in agent_terminated.items():
+                if t:
+                    finished.add(key)
+            pbar.update(1)
+            pbar.set_postfix(finished=f"{len(finished)}/{num_agents}")
+
             # Capture frames for recording
             if recorded_frames is not None:
                 render_data = env.unwrapped._stk.race.render_data
@@ -486,6 +503,7 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
     except KeyboardInterrupt:
         logger.info("Race interrupted by user")
     finally:
+        pbar.close()
         elapsed = time.time() - start_time
         env.close()
 
