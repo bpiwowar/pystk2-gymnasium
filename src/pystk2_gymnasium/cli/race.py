@@ -4,7 +4,6 @@ import importlib
 import importlib.util
 import json
 import logging
-import math
 import signal
 import sys
 import tempfile
@@ -226,21 +225,6 @@ def _call_with_timeout(func, args, timeout: Optional[float]):
     return result
 
 
-def _tile_frames(frames):
-    """Tile a list of HxWx3 numpy arrays into a grid."""
-    n = len(frames)
-    if n == 1:
-        return frames[0]
-    ncols = math.ceil(math.sqrt(n))
-    nrows = math.ceil(n / ncols)
-    while len(frames) < nrows * ncols:
-        frames.append(np.zeros_like(frames[0]))
-    rows = []
-    for r in range(nrows):
-        rows.append(np.concatenate(frames[r * ncols : (r + 1) * ncols], axis=1))
-    return np.concatenate(rows, axis=0)
-
-
 def _load_adapter(path):
     """Load an adapter module from a Python file.
 
@@ -300,17 +284,89 @@ _CODEC_MAP = {
 }
 
 
-def _save_recording(recorded_frames, record_path, fps):
-    """Write recorded frames to a video file."""
-    if not recorded_frames:
-        return
-    from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
+class FrameRecorder:
+    """Saves frames to a temporary directory to avoid holding them in memory."""
 
-    path = Path(record_path)
-    codec = _CODEC_MAP.get(path.suffix.lower(), "libx264")
-    clip = ImageSequenceClip(recorded_frames, fps=fps)
-    clip.write_videofile(str(path), codec=codec, logger=None)
-    logger.info("Saved %d frames to %s", len(recorded_frames), path)
+    def __init__(self, fps: int):
+        self.fps = fps
+        self._tmpdir = tempfile.TemporaryDirectory(prefix="pystk2_rec_")
+        self._frame_count = 0
+
+    @property
+    def frame_dir(self):
+        return Path(self._tmpdir.name)
+
+    def add_frame(self, frame):
+        """Save a single HxWx3 numpy array as a PNG file."""
+        from PIL import Image
+
+        path = self.frame_dir / f"{self._frame_count:06d}.png"
+        Image.fromarray(frame).save(path)
+        self._frame_count += 1
+
+    def add_title_card(self, track_name, kart_names, duration=3.0):
+        """Add a title card: black screen with track name and kart list."""
+        from PIL import Image, ImageDraw, ImageFont
+
+        width, height = 1280, 720
+        img = Image.new("RGB", (width, height), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font_title = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
+            font_body = ImageFont.truetype("DejaVuSans.ttf", 32)
+        except (OSError, IOError):
+            font_title = ImageFont.load_default()
+            font_body = font_title
+
+        # Track name centred near the top
+        draw.text(
+            (width / 2, height * 0.25),
+            track_name or "Unknown Track",
+            fill=(255, 255, 255),
+            font=font_title,
+            anchor="mm",
+        )
+
+        # Kart list
+        y = height * 0.40
+        for ix, name in enumerate(kart_names):
+            draw.text(
+                (width / 2, y),
+                f"{ix + 1}. {name}",
+                fill=(200, 200, 200),
+                font=font_body,
+                anchor="mm",
+            )
+            y += 40
+
+        frame = np.array(img)
+        num_frames = max(1, int(duration * self.fps))
+        for _ in range(num_frames):
+            self.add_frame(frame)
+
+    def save(self, record_path):
+        """Assemble saved frames into a video file."""
+        if self._frame_count == 0:
+            return
+        from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
+
+        # Collect sorted frame paths as strings
+        frame_paths = sorted(str(p) for p in self.frame_dir.glob("*.png"))
+        path = Path(record_path)
+        codec = _CODEC_MAP.get(path.suffix.lower(), "libx264")
+        clip = ImageSequenceClip(frame_paths, fps=self.fps)
+        clip.write_videofile(str(path), codec=codec, logger=None)
+        logger.info("Saved %d frames to %s", self._frame_count, path)
+
+    def cleanup(self):
+        self._tmpdir.cleanup()
+
+    def __del__(self):
+        try:
+            self._tmpdir.cleanup()
+        except Exception:
+            pass
 
 
 def _create_actors(loaded_agents, env, adapter_module):
@@ -457,10 +513,17 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
     max_steps = args.max_steps
     controller = web_server.controller if web_server is not None else None
 
-    recorded_frames = [] if args.record else None
+    recorder = None
+    if args.record:
+        recorder = FrameRecorder(fps=args.fps)
     action_times = [[] for _ in range(num_agents)]
 
     obs, info = env.reset()
+
+    if recorder is not None:
+        track_name = getattr(env.unwrapped, "current_track", args.track)
+        kart_names = [la.player_name for la in loaded_agents]
+        recorder.add_title_card(track_name, kart_names)
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
     finished = set()
@@ -529,11 +592,10 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
             pbar.set_postfix(finished=f"{len(finished)}/{num_agents}")
 
             # Capture frames for recording
-            if recorded_frames is not None:
-                render_data = env.unwrapped._stk.race.render_data
-                cam_images = [np.array(rd.image) for rd in render_data]
-                if cam_images:
-                    recorded_frames.append(_tile_frames(cam_images))
+            if recorder is not None:
+                screen = env.unwrapped._stk.race.screen_capture()
+                if screen is not None and screen.size > 0:
+                    recorder.add_frame(np.array(screen))
 
             # Accumulate per-agent rewards
             agent_rewards = info.get("reward", {})
@@ -550,8 +612,9 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
         elapsed = time.time() - start_time
         env.close()
 
-        if recorded_frames:
-            _save_recording(recorded_frames, args.record, args.fps)
+        if recorder is not None:
+            recorder.save(args.record)
+            recorder.cleanup()
 
     # --- Build results ---
     agent_infos = info.get("infos", {})

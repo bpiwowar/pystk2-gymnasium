@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "PySuperTuxKart2>=0.6.2",
+    "PySuperTuxKart2>=0.6.5",
     "gymnasium>0.29.0",
     "numba",
 ]
@@ -33,7 +33,7 @@ pystk2 = "pystk2_gymnasium.cli:main"
 [project.optional-dependencies]
 cli = ["torch", "tqdm"]
 web = ["dash", "plotly"]
-record = ["moviepy"]
+record = ["moviepy", "Pillow"]
 remote = ["pyzmq>=25"]
 
 [project.urls]

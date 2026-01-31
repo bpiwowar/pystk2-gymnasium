@@ -16,11 +16,10 @@ import gymnasium as gym
 import numpy as np
 
 from pystk2_gymnasium.cli.race import (
+    FrameRecorder,
     _apply_graphics_config,
     _configure_recording,
     _output_message,
-    _save_recording,
-    _tile_frames,
 )
 from pystk2_gymnasium.cli.race_protocol import (
     MSG_CLOSE,
@@ -343,7 +342,14 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
     max_steps_after_first = getattr(args, "max_steps_after_first", None)
     karts_finished_target = getattr(args, "karts_finished", None)
     controller = web_server.controller if web_server is not None else None
-    recorded_frames = [] if args.record else None
+    recorder = None
+    if args.record:
+        recorder = FrameRecorder(fps=args.fps)
+        track_name = getattr(env.unwrapped, "current_track", args.track)
+        kart_names = [
+            meta["player_name"] for conn in connections for meta in conn.agents_meta
+        ]
+        recorder.add_title_card(track_name, kart_names)
     action_times: Dict[str, list] = {str(ix): [] for ix in range(num_agents)}
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
@@ -404,11 +410,10 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
             pbar.update(1)
             pbar.set_postfix(finished=f"{len(finished)}/{num_agents}")
 
-            if recorded_frames is not None:
-                render_data = env.unwrapped._stk.race.render_data
-                cam_images = [np.array(rd.image) for rd in render_data]
-                if cam_images:
-                    recorded_frames.append(_tile_frames(cam_images))
+            if recorder is not None:
+                screen = env.unwrapped._stk.race.screen_capture()
+                if screen is not None and screen.size > 0:
+                    recorder.add_frame(np.array(screen))
 
             agent_rewards = info.get("reward", {})
             for key, r in agent_rewards.items():
@@ -423,8 +428,9 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
         pbar.close()
         elapsed = time.time() - start_time
         env.close()
-        if recorded_frames:
-            _save_recording(recorded_frames, args.record, args.fps)
+        if recorder is not None:
+            recorder.save(args.record)
+            recorder.cleanup()
 
     server_errors = _send_close(connections, timeout_ms)
     _build_results(
