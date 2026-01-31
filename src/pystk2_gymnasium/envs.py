@@ -281,6 +281,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         use_subprocess: bool = True,
         num_cameras: int = 0,
         graphics_config=None,
+        step_size: float = None,
     ):
         """Creates a new race
 
@@ -297,6 +298,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         :param num_cameras: Number of race cameras (default 0, max 8)
         :param graphics_config: Optional pystk2.GraphicsConfig to use instead
             of the default derived from render_mode
+        :param step_size: Simulation time per physics tick in seconds.
+            Defaults to the pystk2 default (0.1s).
         """
         super().__init__()
 
@@ -311,6 +314,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         self.laps = laps
         self.max_paths = max_paths
         self.num_kart = num_kart
+        self.step_size = step_size
 
         # Those will be set when the race is setup
         self.race = None
@@ -339,6 +343,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             track=self.current_track,
             laps=self.laps,
         )
+        if self.step_size is not None:
+            self.config.step_size = self.step_size
         if self.num_cameras > 0:
             self.config.num_cameras = self.num_cameras
 

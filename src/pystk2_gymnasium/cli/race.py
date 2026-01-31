@@ -280,6 +280,10 @@ def _configure_recording(args, env_kwargs):
     env_kwargs["graphics_config"] = gfx
     env_kwargs["use_subprocess"] = False
     env_kwargs["num_cameras"] = min(args.cameras or args.num_karts, 8)
+    render_sub_steps = getattr(args, "render_sub_steps", 1)
+    if render_sub_steps > 1:
+        default_step_size = 0.1  # pystk2 default
+        env_kwargs["step_size"] = default_step_size / render_sub_steps
 
 
 _CODEC_MAP = {
@@ -293,13 +297,20 @@ _CODEC_MAP = {
 
 
 class FrameRecorder:
-    """Saves frames to a temporary directory to avoid holding them in memory."""
+    """Saves frames to a temporary directory to avoid holding them in memory.
 
-    def __init__(self, fps: int):
-        self.fps = fps
+    Frame durations are derived from game timestamps passed to
+    :meth:`add_frame`.  Frames without a timestamp (e.g. the end card)
+    use :attr:`END_CARD_DURATION`.
+    """
+
+    END_CARD_DURATION = 3.0  # seconds
+
+    def __init__(self):
         self._tmpdir = tempfile.TemporaryDirectory(prefix="pystk2_rec_")
         self._frame_count = 0
         self._frame_size = None
+        self._timestamps: List[float] = []
 
     @property
     def frame_dir(self):
@@ -313,11 +324,55 @@ class FrameRecorder:
         Image.fromarray(frame).save(path)
         self._frame_count += 1
 
-    def add_frame(self, frame):
-        """Save a game frame."""
+    def add_frame(self, frame, game_time: float = None):
+        """Save a game frame.
+
+        :param frame: HxWx3 numpy array.
+        :param game_time: Game time in seconds from ``world.time``.
+            When provided, the video will use per-frame durations derived
+            from consecutive game timestamps instead of a fixed fps.
+        """
         if self._frame_size is None:
             self._frame_size = (frame.shape[1], frame.shape[0])
+        if game_time is not None:
+            self._timestamps.append(game_time)
         self._save_frame(frame)
+
+    def capture_sub_steps(self, env, sub_steps):
+        """Run sub_steps-1 extra physics ticks and capture each frame.
+
+        Must be called *after* ``env.step()`` has been called and the
+        first frame has already been captured.  Retrieves the last applied
+        actions via ``race.get_kart_action()`` and replays them.
+
+        :param env: The gymnasium environment.
+        :param sub_steps: Total sub-steps per action (including the
+            ``env.step()`` tick).  When <= 1 this is a no-op.
+        """
+        if sub_steps <= 1:
+            return
+        unwrapped = env.unwrapped
+        base_time = unwrapped.world.time
+        step_size = unwrapped.config.step_size
+
+        # Retrieve the last-applied actions for player-controlled karts,
+        # sorted by kart index (the order race.step() expects).
+        race = unwrapped._stk.race
+        player_kart_indices = sorted(
+            kart_ix
+            for agent, kart_ix in zip(unwrapped.agents, unwrapped.kart_indices)
+            if not agent.use_ai
+        )
+        pystk_actions = [race.get_kart_action(k) for k in player_kart_indices]
+
+        for i in range(sub_steps - 1):
+            race.step(pystk_actions)
+            screen = race.screen_capture()
+            if screen is not None and screen.size > 0:
+                self.add_frame(
+                    np.array(screen),
+                    game_time=base_time + (i + 1) * step_size,
+                )
 
     @staticmethod
     def _load_font(size):
@@ -397,6 +452,32 @@ class FrameRecorder:
 
         self._save_frame(np.array(img))
 
+    def _compute_durations(self, n_frames):
+        """Compute per-frame durations from game timestamps.
+
+        Returns a list of durations (one per frame) or ``None`` if fewer
+        than two timestamps were recorded.
+        """
+        ts = self._timestamps
+        if len(ts) < 2:
+            return None
+
+        # Durations between consecutive game frames
+        durations = [ts[i + 1] - ts[i] for i in range(len(ts) - 1)]
+
+        # Clamp to avoid zero or negative durations from float imprecision
+        min_dur = 1e-4
+        durations = [max(d, min_dur) for d in durations]
+
+        # The last game frame gets the same duration as the previous one
+        durations.append(durations[-1])
+
+        # Extra frames beyond timestamps (e.g. end card)
+        while len(durations) < n_frames:
+            durations.append(self.END_CARD_DURATION)
+
+        return durations[:n_frames]
+
     def save(self, record_path):
         """Assemble saved frames into a video file."""
         if self._frame_count == 0:
@@ -407,8 +488,25 @@ class FrameRecorder:
         frame_paths = sorted(str(p) for p in self.frame_dir.glob("*.png"))
         path = Path(record_path)
         codec = _CODEC_MAP.get(path.suffix.lower(), "libx264")
-        logger.info("Generating video from %d frames (%s)...", self._frame_count, path)
-        clip = ImageSequenceClip(frame_paths, fps=self.fps)
+        logger.info(
+            "Generating video from %d frames (%s)...",
+            self._frame_count,
+            path,
+        )
+
+        durations = self._compute_durations(len(frame_paths))
+        if durations is not None:
+            clip = ImageSequenceClip(frame_paths, durations=durations)
+        else:
+            # Fallback: no timestamps, assume 10 fps (STK default step_size)
+            clip = ImageSequenceClip(frame_paths, fps=10)
+
+        # write_videofile needs fps even when durations are set;
+        # derive from the median frame duration.
+        if clip.fps is None:
+            median_dur = sorted(durations)[len(durations) // 2]
+            clip.fps = max(1, round(1.0 / median_dur))
+
         clip.write_videofile(str(path), codec=codec, logger="bar")
         logger.info("Saved recording to %s", path)
 
@@ -595,8 +693,9 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
     controller = web_server.controller if web_server is not None else None
 
     recorder = None
+    render_sub_steps = getattr(args, "render_sub_steps", 1)
     if args.record:
-        recorder = FrameRecorder(fps=args.fps)
+        recorder = FrameRecorder()
     action_times = [[] for _ in range(num_agents)]
 
     obs, info = env.reset()
@@ -679,7 +778,11 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
             if recorder is not None:
                 screen = env.unwrapped._stk.race.screen_capture()
                 if screen is not None and screen.size > 0:
-                    recorder.add_frame(np.array(screen))
+                    recorder.add_frame(
+                        np.array(screen),
+                        game_time=env.unwrapped.world.time,
+                    )
+                recorder.capture_sub_steps(env, render_sub_steps)
 
             # Accumulate per-agent rewards
             agent_rewards = info.get("reward", {})

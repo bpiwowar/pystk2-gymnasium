@@ -118,10 +118,11 @@ def main():
         help="Camera screen height in pixels (default: pystk2 HD preset)",
     )
     race_parser.add_argument(
-        "--fps",
+        "--render-sub-steps",
         type=int,
-        default=10,
-        help="Video frame rate (default: 10)",
+        default=1,
+        help="Physics sub-steps per action when recording (default: 2). "
+        "Higher values produce smoother video without changing the action rate.",
     )
     race_parser.add_argument(
         "--adapter",
@@ -275,10 +276,11 @@ def main():
         help="Camera screen height in pixels (default: pystk2 HD preset)",
     )
     client_parser.add_argument(
-        "--fps",
+        "--render-sub-steps",
         type=int,
-        default=10,
-        help="Video frame rate (default: 10)",
+        default=1,
+        help="Physics sub-steps per action when recording (default: 2). "
+        "Higher values produce smoother video without changing the action rate.",
     )
     client_parser.add_argument(
         "--max-steps",

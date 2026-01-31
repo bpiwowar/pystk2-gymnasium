@@ -14,6 +14,7 @@ from typing import Dict, List
 
 import gymnasium as gym
 import numpy as np
+import zmq
 
 from pystk2_gymnasium.cli.race import (
     FrameRecorder,
@@ -104,57 +105,132 @@ def _handshake_init(connections, timeout_ms):
 
 
 def _handshake_spaces(connections, env, timeout_ms):
-    """Send base observation/action spaces to each server."""
+    """Send base observation/action spaces to each server (parallel)."""
+    # Phase 1: send to all
     for conn in connections:
         obs_spaces = {key: env.observation_space[key] for key in conn.agent_keys}
         act_spaces = {key: env.action_space[key] for key in conn.agent_keys}
-        _send_and_recv(
-            conn,
+        send_msg(
+            conn.socket,
             {
                 "type": MSG_SPACES,
                 "observation_spaces": obs_spaces,
                 "action_spaces": act_spaces,
             },
-            MSG_SPACES_RESPONSE,
-            timeout_ms,
         )
-        logger.info("SPACES sent to %s for keys %s", conn.address, conn.agent_keys)
+
+    # Phase 2: recv all with wall-clock deadline
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    pending = {conn.socket: conn for conn in connections}
+    poller = zmq.Poller()
+    for sock in pending:
+        poller.register(sock, zmq.POLLIN)
+
+    while pending:
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        if remaining_ms == 0:
+            addrs = [c.address for c in pending.values()]
+            raise TimeoutError(
+                f"Servers {addrs} did not respond within {timeout_ms / 1000:.0f}s"
+            )
+        ready = dict(poller.poll(remaining_ms))
+        for sock in list(pending):
+            if sock in ready:
+                conn = pending.pop(sock)
+                poller.unregister(sock)
+                resp = recv_msg(sock)
+                if resp["type"] == MSG_ERROR:
+                    raise AgentException(
+                        f"Server {conn.address} error: {resp['message']}\n"
+                        f"{resp.get('traceback', '')}",
+                        resp.get("key"),
+                    )
+                if resp["type"] != MSG_SPACES_RESPONSE:
+                    raise RuntimeError(
+                        f"Unexpected response from {conn.address}: "
+                        f"expected {MSG_SPACES_RESPONSE}, got {resp['type']}"
+                    )
+                logger.info(
+                    "SPACES sent to %s for keys %s", conn.address, conn.agent_keys
+                )
+
+
+def _process_step_response(resp, conn, all_actions, action_times, failed_conns, env):
+    """Process a single server's MSG_STEP_RESPONSE.
+
+    On agent errors, marks the connection as failed so it is skipped
+    on subsequent steps (random actions used instead).
+    """
+    if resp["type"] == MSG_ERROR:
+        logger.warning(
+            "Server %s error: %s — will use random actions",
+            conn.address,
+            resp["message"],
+        )
+        failed_conns.add(conn)
+        return
+    if resp["type"] != MSG_STEP_RESPONSE:
+        raise RuntimeError(
+            f"Unexpected response from {conn.address}: "
+            f"expected {MSG_STEP_RESPONSE}, got {resp['type']}"
+        )
+
+    for key, action in resp["actions"].items():
+        all_actions[key] = action
+    for key, t in resp.get("action_times", {}).items():
+        action_times[key].append(t)
+
+    for key, err in resp.get("errors", {}).items():
+        logger.warning(
+            "Agent %s error from %s: %s — will use random actions",
+            key,
+            conn.address,
+            err["message"],
+        )
+        failed_conns.add(conn)
 
 
 def _collect_actions(
-    connections, obs, env, num_agents, catch_errors, action_times, timeout_ms
+    connections, obs, env, num_agents, failed_conns, action_times, timeout_ms
 ):
-    """Send base observations to all servers and collect base actions."""
+    """Send base observations to all servers and collect base actions.
+
+    Connections in *failed_conns* are skipped entirely; random actions
+    are used for their agents.
+    """
     all_actions = {}
-    for conn in connections:
+    active_conns = [c for c in connections if c not in failed_conns]
+
+    # Phase 1: send MSG_STEP to active servers
+    for conn in active_conns:
         server_obs = {key: obs[key] for key in conn.agent_keys if key in obs}
-        resp = _send_and_recv(
-            conn,
-            {"type": MSG_STEP, "observations": server_obs},
-            MSG_STEP_RESPONSE,
-            timeout_ms,
-        )
+        send_msg(conn.socket, {"type": MSG_STEP, "observations": server_obs})
 
-        for key, action in resp["actions"].items():
-            all_actions[key] = action
-        for key, t in resp.get("action_times", {}).items():
-            action_times[key].append(t)
+    # Phase 2: recv all responses with wall-clock deadline
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    pending = {conn.socket: conn for conn in active_conns}
+    poller = zmq.Poller()
+    for sock in pending:
+        poller.register(sock, zmq.POLLIN)
 
-        for key, err in resp.get("errors", {}).items():
-            if not catch_errors:
-                raise AgentException(
-                    f"Agent {key} error from {conn.address}: {err['message']}",
-                    key,
-                )
-            logger.warning(
-                "Agent %s error from %s: %s — using random action",
-                key,
-                conn.address,
-                err["message"],
+    while pending:
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        if remaining_ms == 0:
+            addrs = [c.address for c in pending.values()]
+            raise TimeoutError(
+                f"Servers {addrs} did not respond within {timeout_ms / 1000:.0f}s"
             )
-            all_actions[key] = env.action_space[key].sample()
+        ready = dict(poller.poll(remaining_ms))
+        for sock in list(pending):
+            if sock in ready:
+                conn = pending.pop(sock)
+                poller.unregister(sock)
+                resp = recv_msg(sock)
+                _process_step_response(
+                    resp, conn, all_actions, action_times, failed_conns, env
+                )
 
-    # Fill in any missing actions with random
+    # Phase 3: fill in any missing actions with random
     for ix in range(num_agents):
         key = str(ix)
         if key not in all_actions:
@@ -164,20 +240,55 @@ def _collect_actions(
 
 
 def _send_close(connections, timeout_ms):
-    """Send CLOSE to all servers, collect per-agent errors.
+    """Send CLOSE to all servers, collect per-agent errors (parallel, tolerant).
 
     Returns a dict ``{agent_key: error_message}`` aggregated from all servers.
     """
     all_errors = {}
+
+    # Phase 1: send CLOSE to all servers (tolerant of failures)
+    sent = {}
     for conn in connections:
         try:
             send_msg(conn.socket, {"type": MSG_CLOSE})
-            if conn.socket.poll(timeout_ms):
-                resp = recv_msg(conn.socket)
-                for key, err in resp.get("errors", {}).items():
-                    all_errors[key] = err
+            sent[conn.socket] = conn
         except Exception:
             logger.warning("Failed to send CLOSE to %s", conn.address)
+
+    if not sent:
+        return all_errors
+
+    # Phase 2: recv all responses with wall-clock deadline (skip on timeout)
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    pending = dict(sent)
+    poller = zmq.Poller()
+    for sock in pending:
+        poller.register(sock, zmq.POLLIN)
+
+    while pending:
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        if remaining_ms == 0:
+            addrs = [c.address for c in pending.values()]
+            logger.warning("Timeout waiting for CLOSE response from %s", addrs)
+            break
+        ready = dict(poller.poll(remaining_ms))
+        if not ready:
+            addrs = [c.address for c in pending.values()]
+            logger.warning("Timeout waiting for CLOSE response from %s", addrs)
+            break
+        for sock in list(pending):
+            if sock in ready:
+                conn = pending.pop(sock)
+                poller.unregister(sock)
+                try:
+                    resp = recv_msg(sock)
+                    for key, err in resp.get("errors", {}).items():
+                        all_errors[key] = err
+                except Exception:
+                    logger.warning(
+                        "Failed to receive CLOSE response from %s", conn.address
+                    )
+
     return all_errors
 
 
@@ -249,8 +360,6 @@ def run_race_client(args):
 
 
 def _run_race_client_inner(args, player_names: list):
-    import zmq
-
     timeout_ms = int(args.timeout * 1000)
     context = zmq.Context()
     connections: List[ServerConnection] = []
@@ -345,14 +454,15 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
             )
             sys.exit(1)
 
-    catch_errors = args.error_handling == "catch"
+    failed_conns = set()
     max_steps = args.max_steps
     max_steps_after_first = getattr(args, "max_steps_after_first", None)
     karts_finished_target = getattr(args, "karts_finished", None)
     controller = web_server.controller if web_server is not None else None
     recorder = None
+    render_sub_steps = getattr(args, "render_sub_steps", 1)
     if args.record:
-        recorder = FrameRecorder(fps=args.fps)
+        recorder = FrameRecorder()
     action_times: Dict[str, list] = {str(ix): [] for ix in range(num_agents)}
 
     # Record starting grid positions (1-based)
@@ -385,7 +495,7 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
                 obs,
                 env,
                 num_agents,
-                catch_errors,
+                failed_conns,
                 action_times,
                 timeout_ms,
             )
@@ -424,7 +534,11 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
             if recorder is not None:
                 screen = env.unwrapped._stk.race.screen_capture()
                 if screen is not None and screen.size > 0:
-                    recorder.add_frame(np.array(screen))
+                    recorder.add_frame(
+                        np.array(screen),
+                        game_time=env.unwrapped.world.time,
+                    )
+                recorder.capture_sub_steps(env, render_sub_steps)
 
             agent_rewards = info.get("reward", {})
             for key, r in agent_rewards.items():

@@ -354,24 +354,7 @@ def _handle_session(msg_queue, send_fn, loaded_agents, args, runtime):
         # Client sends *base* observations; wrap → actor → unwrap
         base_observations = msg["observations"]
 
-        # Wrap base observations through the per-agent wrapper chains
-        try:
-            wrapped_observations = wrapper_adapter.observation(base_observations)
-        except AgentException as exc:
-            error_msg = f"Wrapper observation error: {exc}"
-            logger.warning("Agent key=%s: %s", exc.key, error_msg)
-            runtime.mark_failed(exc.key, error_msg)
-            # Cannot proceed without wrapped observations — skip this step
-            send_fn(
-                {
-                    "type": MSG_STEP_RESPONSE,
-                    "actions": {},
-                    "action_times": {},
-                    "errors": {exc.key: {"message": error_msg}},
-                }
-            )
-            continue
-
+        # Wrap base observations, call actors, unwrap actions — per agent
         wrapped_actions = {}
         action_times = {}
         errors = {}
@@ -382,15 +365,27 @@ def _handle_session(msg_queue, send_fn, loaded_agents, args, runtime):
             idx = key_to_idx[key]
             la = loaded_agents[idx]
 
+            # Wrap observation
+            try:
+                wrapped_obs = wrapper_adapter.observation({key: base_observations[key]})
+            except AgentException as exc:
+                error_msg = f"Wrapper observation error: {exc}"
+                logger.warning(
+                    "Agent %d (%s, key=%s): %s", idx, la.player_name, key, error_msg
+                )
+                runtime.mark_failed(key, error_msg)
+                errors[key] = {"message": error_msg}
+                continue
+
+            # Call actor
             try:
                 t_start = time.perf_counter()
                 if states.get(key) is not None:
-                    actor_args = (states[key], wrapped_observations[key])
+                    actor_args = (states[key], wrapped_obs[key])
                 else:
-                    actor_args = (wrapped_observations[key],)
+                    actor_args = (wrapped_obs[key],)
                 action = _call_with_timeout(actors[key], actor_args, action_timeout)
                 action_times[key] = time.perf_counter() - t_start
-                wrapped_actions[key] = action
             except Exception as exc:
                 error_msg = f"Actor error: {exc}"
                 logger.warning(
@@ -398,16 +393,21 @@ def _handle_session(msg_queue, send_fn, loaded_agents, args, runtime):
                 )
                 runtime.mark_failed(key, error_msg)
                 errors[key] = {"message": error_msg}
+                continue
 
-        # Unwrap actions back to the base action space
-        try:
-            base_actions = wrapper_adapter.action(wrapped_actions)
-        except AgentException as exc:
-            error_msg = f"Wrapper action error: {exc}"
-            logger.warning("Agent key=%s: %s", exc.key, error_msg)
-            runtime.mark_failed(exc.key, error_msg)
-            errors[exc.key] = {"message": error_msg}
-            base_actions = {}
+            # Unwrap action
+            try:
+                base_action = wrapper_adapter.action({key: action})
+                wrapped_actions.update(base_action)
+            except AgentException as exc:
+                error_msg = f"Wrapper action error: {exc}"
+                logger.warning(
+                    "Agent %d (%s, key=%s): %s", idx, la.player_name, key, error_msg
+                )
+                runtime.mark_failed(key, error_msg)
+                errors[key] = {"message": error_msg}
+
+        base_actions = wrapped_actions
 
         send_fn(
             {
