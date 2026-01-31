@@ -263,10 +263,18 @@ def _apply_graphics_config(args, env_kwargs):
 
 
 def _configure_recording(args, env_kwargs):
-    """Configure env_kwargs for race recording."""
+    """Configure env_kwargs for race recording.
+
+    Uses 1280x720 by default unless --screen-width/--screen-height override.
+    """
     import pystk2
 
     gfx = env_kwargs.get("graphics_config") or pystk2.GraphicsConfig.hd()
+    # Default to 1280x720 for recordings (pystk2 presets use 600x400)
+    if getattr(args, "screen_width", None) is None:
+        gfx.screen_width = 1280
+    if getattr(args, "screen_height", None) is None:
+        gfx.screen_height = 720
     if args.hide:
         gfx.display = False
     env_kwargs["graphics_config"] = gfx
@@ -291,12 +299,13 @@ class FrameRecorder:
         self.fps = fps
         self._tmpdir = tempfile.TemporaryDirectory(prefix="pystk2_rec_")
         self._frame_count = 0
+        self._pending_title = None
 
     @property
     def frame_dir(self):
         return Path(self._tmpdir.name)
 
-    def add_frame(self, frame):
+    def _save_frame(self, frame):
         """Save a single HxWx3 numpy array as a PNG file."""
         from PIL import Image
 
@@ -304,20 +313,58 @@ class FrameRecorder:
         Image.fromarray(frame).save(path)
         self._frame_count += 1
 
-    def add_title_card(self, track_name, kart_names, duration=3.0):
-        """Add a title card: black screen with track name and kart list."""
-        from PIL import Image, ImageDraw, ImageFont
+    def add_frame(self, frame):
+        """Save a frame, flushing any pending title card first."""
+        if self._pending_title is not None:
+            h, w = frame.shape[:2]
+            self._render_title_card(w, h, **self._pending_title)
+            self._pending_title = None
+        self._save_frame(frame)
 
-        width, height = 1280, 720
+    def set_title_card(self, track_name, kart_names, duration=3.0):
+        """Queue a title card to be rendered when frame size is known."""
+        self._pending_title = {
+            "track_name": track_name,
+            "kart_names": kart_names,
+            "duration": duration,
+        }
+
+    @staticmethod
+    def _load_font(size):
+        """Load a TrueType font at the given size, trying common paths."""
+        from PIL import ImageFont
+
+        candidates = [
+            "DejaVuSans-Bold.ttf",
+            "DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            # macOS system fonts
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/SFNSMono.ttf",
+            "/Library/Fonts/Arial.ttf",
+        ]
+        for path in candidates:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        # Pillow >= 10.0 load_default accepts a size argument
+        return ImageFont.load_default(size=size)
+
+    def _render_title_card(self, width, height, track_name, kart_names, duration):
+        """Render a title card matching the given frame dimensions."""
+        from PIL import Image, ImageDraw
+
         img = Image.new("RGB", (width, height), color=(0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        try:
-            font_title = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
-            font_body = ImageFont.truetype("DejaVuSans.ttf", 32)
-        except (OSError, IOError):
-            font_title = ImageFont.load_default()
-            font_body = font_title
+        # Scale fonts relative to frame height
+        title_size = max(24, height // 8)
+        body_size = max(16, height // 14)
+
+        font_title = self._load_font(title_size)
+        font_body = self._load_font(body_size)
 
         # Track name centred near the top
         draw.text(
@@ -329,6 +376,7 @@ class FrameRecorder:
         )
 
         # Kart list
+        line_height = body_size + 8
         y = height * 0.40
         for ix, name in enumerate(kart_names):
             draw.text(
@@ -338,12 +386,12 @@ class FrameRecorder:
                 font=font_body,
                 anchor="mm",
             )
-            y += 40
+            y += line_height
 
         frame = np.array(img)
         num_frames = max(1, int(duration * self.fps))
         for _ in range(num_frames):
-            self.add_frame(frame)
+            self._save_frame(frame)
 
     def save(self, record_path):
         """Assemble saved frames into a video file."""
@@ -355,9 +403,10 @@ class FrameRecorder:
         frame_paths = sorted(str(p) for p in self.frame_dir.glob("*.png"))
         path = Path(record_path)
         codec = _CODEC_MAP.get(path.suffix.lower(), "libx264")
+        logger.info("Generating video from %d frames (%s)...", self._frame_count, path)
         clip = ImageSequenceClip(frame_paths, fps=self.fps)
         clip.write_videofile(str(path), codec=codec, logger=None)
-        logger.info("Saved %d frames to %s", self._frame_count, path)
+        logger.info("Saved recording to %s", path)
 
     def cleanup(self):
         self._tmpdir.cleanup()
@@ -523,7 +572,7 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
     if recorder is not None:
         track_name = getattr(env.unwrapped, "current_track", args.track)
         kart_names = [la.player_name for la in loaded_agents]
-        recorder.add_title_card(track_name, kart_names)
+        recorder.set_title_card(track_name, kart_names)
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
     finished = set()

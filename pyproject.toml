@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "PySuperTuxKart2>=0.6.5",
+    "PySuperTuxKart2>=0.6.4",
     "gymnasium>0.29.0",
     "numba",
 ]

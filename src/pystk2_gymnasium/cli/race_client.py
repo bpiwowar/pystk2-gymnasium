@@ -349,7 +349,7 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
         kart_names = [
             meta["player_name"] for conn in connections for meta in conn.agents_meta
         ]
-        recorder.add_title_card(track_name, kart_names)
+        recorder.set_title_card(track_name, kart_names)
     action_times: Dict[str, list] = {str(ix): [] for ix in range(num_agents)}
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
