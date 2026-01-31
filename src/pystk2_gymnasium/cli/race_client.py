@@ -18,6 +18,7 @@ import numpy as np
 from pystk2_gymnasium.cli.race import (
     FrameRecorder,
     _apply_graphics_config,
+    _assign_karts_and_colors,
     _configure_recording,
     _output_message,
 )
@@ -264,14 +265,21 @@ def _run_race_client_inner(args, player_names: list):
         # --- Handshake: get agent metadata ---
         num_agents = _handshake_init(connections, timeout_ms)
 
-        agent_specs = []
-        for conn in connections:
-            for meta in conn.agents_meta:
-                agent_specs.append(AgentSpec(name=meta["player_name"]))
-                player_names.append(meta["player_name"])
+        all_names = [
+            meta["player_name"] for conn in connections for meta in conn.agents_meta
+        ]
+        agent_specs = [AgentSpec(name=name) for name in all_names]
+        player_names.extend(all_names)
 
         # --- Create base environment (no wrappers — server applies them) ---
         env = _create_env(args, agent_specs)
+
+        # Assign distinct karts and colors now that pystk2 is initialized
+        kart_colors = _assign_karts_and_colors(len(all_names))
+        for spec, (kart, color) in zip(env.unwrapped.agents, kart_colors):
+            spec.kart = kart
+            spec.color = color
+
         obs, info = env.reset()
 
         # --- Send base spaces to servers ---
@@ -345,12 +353,15 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
     recorder = None
     if args.record:
         recorder = FrameRecorder(fps=args.fps)
-        track_name = getattr(env.unwrapped, "current_track", args.track)
-        kart_names = [
-            meta["player_name"] for conn in connections for meta in conn.agents_meta
-        ]
-        recorder.set_title_card(track_name, kart_names)
     action_times: Dict[str, list] = {str(ix): [] for ix in range(num_agents)}
+
+    # Record starting grid positions (1-based)
+    start_positions = {}
+    kart_indices = getattr(env.unwrapped, "kart_indices", None)
+    if kart_indices is not None:
+        for ix, kart_ix in enumerate(kart_indices):
+            start_positions[str(ix)] = kart_ix + 1
+
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
     finished = set()
@@ -429,6 +440,23 @@ def _run_race_loop(args, env, connections, num_agents, timeout_ms, obs, info):
         elapsed = time.time() - start_time
         env.close()
         if recorder is not None:
+            agent_infos = info.get("infos", {})
+            track_name = getattr(env.unwrapped, "current_track", args.track)
+            all_names = [
+                meta["player_name"] for conn in connections for meta in conn.agents_meta
+            ]
+            end_card_results = []
+            for ix, name in enumerate(all_names):
+                key = str(ix)
+                end_pos = agent_infos.get(key, {}).get("position")
+                end_card_results.append(
+                    {
+                        "name": name,
+                        "start_pos": start_positions.get(key, "?"),
+                        "end_pos": end_pos,
+                    }
+                )
+            recorder.add_end_card(track_name, end_card_results)
             recorder.save(args.record)
             recorder.cleanup()
 

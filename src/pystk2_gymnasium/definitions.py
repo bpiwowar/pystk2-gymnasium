@@ -39,6 +39,10 @@ class AgentSpec:
     name: str = ""
     #: Camera mode (AUTO, ON, OFF). By default, only non-AI agents get a camera
     camera_mode: CameraMode = CameraMode.AUTO
+    #: Kart model name (empty string for default)
+    kart: str = ""
+    #: Kart color hue shift in [0, 1]. 0 uses the kart's default color.
+    color: float = 0.0
 
 
 class ActionObservationWrapper(Wrapper[ObsType, WrapperActType, ObsType, ActType]):

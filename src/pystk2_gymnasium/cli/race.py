@@ -299,7 +299,7 @@ class FrameRecorder:
         self.fps = fps
         self._tmpdir = tempfile.TemporaryDirectory(prefix="pystk2_rec_")
         self._frame_count = 0
-        self._pending_title = None
+        self._frame_size = None
 
     @property
     def frame_dir(self):
@@ -314,20 +314,10 @@ class FrameRecorder:
         self._frame_count += 1
 
     def add_frame(self, frame):
-        """Save a frame, flushing any pending title card first."""
-        if self._pending_title is not None:
-            h, w = frame.shape[:2]
-            self._render_title_card(w, h, **self._pending_title)
-            self._pending_title = None
+        """Save a game frame."""
+        if self._frame_size is None:
+            self._frame_size = (frame.shape[1], frame.shape[0])
         self._save_frame(frame)
-
-    def set_title_card(self, track_name, kart_names, duration=3.0):
-        """Queue a title card to be rendered when frame size is known."""
-        self._pending_title = {
-            "track_name": track_name,
-            "kart_names": kart_names,
-            "duration": duration,
-        }
 
     @staticmethod
     def _load_font(size):
@@ -352,10 +342,19 @@ class FrameRecorder:
         # Pillow >= 10.0 load_default accepts a size argument
         return ImageFont.load_default(size=size)
 
-    def _render_title_card(self, width, height, track_name, kart_names, duration):
-        """Render a title card matching the given frame dimensions."""
+    def add_end_card(self, track_name, results):
+        """Add a single end-card frame showing track name and agent results.
+
+        :param track_name: Name of the track.
+        :param results: List of dicts with keys ``name``, ``start_pos``,
+            ``end_pos`` for each controlled agent.
+        """
         from PIL import Image, ImageDraw
 
+        if self._frame_size is None:
+            return
+
+        width, height = self._frame_size
         img = Image.new("RGB", (width, height), color=(0, 0, 0))
         draw = ImageDraw.Draw(img)
 
@@ -366,32 +365,37 @@ class FrameRecorder:
         font_title = self._load_font(title_size)
         font_body = self._load_font(body_size)
 
-        # Track name centred near the top
+        # Track name at the very top
         draw.text(
-            (width / 2, height * 0.25),
+            (width / 2, title_size * 0.7),
             track_name or "Unknown Track",
             fill=(255, 255, 255),
             font=font_title,
             anchor="mm",
         )
 
-        # Kart list
-        line_height = body_size + 8
-        y = height * 0.40
-        for ix, name in enumerate(kart_names):
+        # Results: "#{start}. {name} (end #{end})"
+        left_x = width * 0.15
+        line_height = body_size + 10
+        y = title_size * 1.5 + line_height
+        for r in results:
+            start = r["start_pos"]
+            end = r.get("end_pos")
+            if end is not None:
+                line = f"#{start}. {r['name']} (end #{end})"
+            else:
+                line = f"#{start}. {r['name']}"
+
             draw.text(
-                (width / 2, y),
-                f"{ix + 1}. {name}",
+                (left_x, y),
+                line,
                 fill=(200, 200, 200),
                 font=font_body,
-                anchor="mm",
+                anchor="lm",
             )
             y += line_height
 
-        frame = np.array(img)
-        num_frames = max(1, int(duration * self.fps))
-        for _ in range(num_frames):
-            self._save_frame(frame)
+        self._save_frame(np.array(img))
 
     def save(self, record_path):
         """Assemble saved frames into a video file."""
@@ -405,7 +409,7 @@ class FrameRecorder:
         codec = _CODEC_MAP.get(path.suffix.lower(), "libx264")
         logger.info("Generating video from %d frames (%s)...", self._frame_count, path)
         clip = ImageSequenceClip(frame_paths, fps=self.fps)
-        clip.write_videofile(str(path), codec=codec, logger=None)
+        clip.write_videofile(str(path), codec=codec, logger="bar")
         logger.info("Saved recording to %s", path)
 
     def cleanup(self):
@@ -416,6 +420,28 @@ class FrameRecorder:
             self._tmpdir.cleanup()
         except Exception:
             pass
+
+
+def _assign_karts_and_colors(n):
+    """Return lists of (kart, color) for *n* agents.
+
+    Must be called after pystk2 is initialized (e.g. after gym.make).
+    Cycles through available kart models and spreads colors evenly
+    across the hue wheel so that every agent looks distinct.
+    """
+    import pystk2
+
+    karts = pystk2.list_karts()
+    if not karts:
+        return [("", 0.0)] * n
+
+    assigned = []
+    for ix in range(n):
+        kart = karts[ix % len(karts)]
+        # Spread hue evenly; skip 0.0 which means "default color"
+        color = ((ix + 1) / (n + 1)) if n > 1 else 0.0
+        assigned.append((kart, color))
+    return assigned
 
 
 def _create_actors(loaded_agents, env, adapter_module):
@@ -500,7 +526,7 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
 
     num_agents = len(loaded_agents)
 
-    # --- Build agent specs ---
+    # --- Build agent specs (kart/color assigned after pystk2 init) ---
     agent_specs = [AgentSpec(name=la.player_name) for la in loaded_agents]
 
     # --- Create the base multi-agent environment ---
@@ -522,6 +548,12 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
         _configure_recording(args, env_kwargs)
 
     env = gym.make("supertuxkart/multi-full-v0", **env_kwargs)
+
+    # Assign distinct karts and colors now that pystk2 is initialized
+    kart_colors = _assign_karts_and_colors(num_agents)
+    for spec, (kart, color) in zip(env.unwrapped.agents, kart_colors):
+        spec.kart = kart
+        spec.color = color
 
     # --- Apply per-agent wrappers ---
     wrapper_factories = {}
@@ -569,10 +601,13 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
 
     obs, info = env.reset()
 
-    if recorder is not None:
-        track_name = getattr(env.unwrapped, "current_track", args.track)
-        kart_names = [la.player_name for la in loaded_agents]
-        recorder.set_title_card(track_name, kart_names)
+    # Record starting grid positions (1-based)
+    start_positions = {}
+    kart_indices = getattr(env.unwrapped, "kart_indices", None)
+    if kart_indices is not None:
+        for ix, kart_ix in enumerate(kart_indices):
+            start_positions[str(ix)] = kart_ix + 1
+
     done = False
     total_rewards = {str(ix): 0.0 for ix in range(num_agents)}
     finished = set()
@@ -662,6 +697,20 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
         env.close()
 
         if recorder is not None:
+            agent_infos = info.get("infos", {})
+            track_name = getattr(env.unwrapped, "current_track", args.track)
+            end_card_results = []
+            for ix, la in enumerate(loaded_agents):
+                key = str(ix)
+                end_pos = agent_infos.get(key, {}).get("position")
+                end_card_results.append(
+                    {
+                        "name": la.player_name,
+                        "start_pos": start_positions.get(key, "?"),
+                        "end_pos": end_pos,
+                    }
+                )
+            recorder.add_end_card(track_name, end_card_results)
             recorder.save(args.record)
             recorder.cleanup()
 

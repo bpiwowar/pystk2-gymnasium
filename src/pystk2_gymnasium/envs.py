@@ -602,6 +602,10 @@ class STKRaceEnv(BaseSTKRaceEnv):
             self.kart_ix
         ].camera_mode = pystk2.PlayerConfig.CameraMode.ON
         self.config.players[self.kart_ix].name = self.agent.name
+        if self.agent.kart:
+            self.config.players[self.kart_ix].kart = self.agent.kart
+        if self.agent.color > 0:
+            self.config.players[self.kart_ix].color = self.agent.color
 
         if not self.agent.use_ai:
             self.config.players[
@@ -695,6 +699,10 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
                     kart_ix
                 ].controller = pystk2.PlayerConfig.Controller.PLAYER_CONTROL
             self.config.players[kart_ix].name = agent.name
+            if agent.kart:
+                self.config.players[kart_ix].kart = agent.kart
+            if agent.color > 0:
+                self.config.players[kart_ix].color = agent.color
 
         self.kart_m_indices = list(range(len(self.kart_indices)))
         self.kart_m_indices.sort(key=lambda ix: self.kart_indices[ix])

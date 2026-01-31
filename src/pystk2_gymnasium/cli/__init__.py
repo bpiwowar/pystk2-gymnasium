@@ -120,8 +120,8 @@ def main():
     race_parser.add_argument(
         "--fps",
         type=int,
-        default=20,
-        help="Video frame rate (default: 20)",
+        default=10,
+        help="Video frame rate (default: 10)",
     )
     race_parser.add_argument(
         "--adapter",
@@ -277,8 +277,8 @@ def main():
     client_parser.add_argument(
         "--fps",
         type=int,
-        default=20,
-        help="Video frame rate (default: 20)",
+        default=10,
+        help="Video frame rate (default: 10)",
     )
     client_parser.add_argument(
         "--max-steps",
