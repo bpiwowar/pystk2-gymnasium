@@ -38,6 +38,7 @@ class LoadedAgent:
     get_wrappers: Optional[Callable]  # () -> list of extra wrappers
     source: str  # original source path/name
     load_error: Optional[str] = None  # set when the agent failed to load
+    reset_state: Optional[Callable] = None  # () -> state object for stateful agents
 
 
 def _load_module_from_path(path: Path):
@@ -146,6 +147,7 @@ def load_agent(
     player_name = name_override or getattr(module, "player_name", source)
     get_wrappers = getattr(module, "get_wrappers", None)
     get_actor = module.get_actor
+    reset_state = getattr(module, "reset_state", None)
 
     return LoadedAgent(
         env_name=env_name,
@@ -154,6 +156,7 @@ def load_agent(
         module_dir=module_dir,
         get_wrappers=get_wrappers,
         source=source,
+        reset_state=reset_state,
     )
 
 
@@ -366,7 +369,7 @@ def run_race(args):
             td.cleanup()
 
 
-def _run_race_inner(args, temp_dirs: list, player_names: list):
+def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
     from pystk2_gymnasium.wrappers import MonoAgentWrapperAdapter
 
     # --- Load adapter if specified (before agents, for prepare_module_dir) ---
@@ -464,6 +467,11 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
     step_count = 0
     start_time = time.time()
 
+    # Initialize per-agent state for stateful agents
+    states = [
+        la.reset_state() if la.reset_state is not None else None for la in loaded_agents
+    ]
+
     if web_server is not None:
         web_server.update(env, obs, info, total_rewards, step_count)
 
@@ -485,7 +493,11 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):
                 key = str(ix)
                 try:
                     t_start = time.perf_counter()
-                    action = _call_with_timeout(actor, (obs[key],), action_timeout)
+                    if states[ix] is not None:
+                        args_tuple = (states[ix], obs[key])
+                    else:
+                        args_tuple = (obs[key],)
+                    action = _call_with_timeout(actor, args_tuple, action_timeout)
                     action_times[ix].append(time.perf_counter() - t_start)
                     actions[key] = action
                 except Exception as exc:
