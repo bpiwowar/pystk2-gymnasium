@@ -9,6 +9,11 @@ env_name = "supertuxkart/simple-v0"
 player_name = "Heuristic"
 
 
+def create_state():
+    """No state needed for this agent."""
+    return None
+
+
 def get_actor(state, observation_space, action_space):
     """Return an actor callable: observation -> action.
 
@@ -20,7 +25,7 @@ def get_actor(state, observation_space, action_space):
     - Never brakes, drifts, or calls rescue
     """
 
-    def actor(obs):
+    def actor(state, obs):
         # paths_end is shape (N, 3) with polar coords (angle_zx, angle_zy, dist)
         # after PolarObservations wrapper
         paths_end = obs["paths_end"]

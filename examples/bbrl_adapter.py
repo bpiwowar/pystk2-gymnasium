@@ -66,7 +66,7 @@ def create_actor(get_actor_fn, module_dir, obs_space, act_space):
     :param module_dir: Path to the agent module directory
     :param obs_space: The observation space
     :param act_space: The action space
-    :returns: A callable that takes an observation dict and returns an action
+    :returns: A callable ``(state, obs) -> action`` (state is ignored)
     """
     from bbrl.agents.gymnasium import ParallelGymAgent
     from bbrl.workspace import Workspace
@@ -89,7 +89,7 @@ def create_actor(get_actor_fn, module_dir, obs_space, act_space):
     workspace = Workspace()
     t = [0]  # mutable counter
 
-    def call(obs):
+    def call(state, obs):
         # Format observation into workspace
         # _format_frame already adds the batch dimension
         formatted = ParallelGymAgent._format_frame(obs)

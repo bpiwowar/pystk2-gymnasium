@@ -95,7 +95,6 @@ class _AgentRuntime:
         self.failed_keys = None
         self._init_error = None  # (msg, tb) if wrapper building itself failed
         self._key_to_idx = None  # {agent_key: int} mapping
-        self._has_state = None  # {agent_key: bool} for stateful agents
 
     def ensure_initialized(self, agent_keys, obs_spaces, act_spaces):
         """Build wrapper adapter + actors on first call; return cached on later calls.
@@ -115,18 +114,14 @@ class _AgentRuntime:
             self.failed_keys[key] = error_msg
 
     def reset_states(self):
-        """Return a fresh per-session state dict by calling each agent's reset_state().
+        """Return a fresh per-session state dict by calling each agent's create_state().
 
-        For agents without ``reset_state``, the value is ``None``.
+        Returns ``None`` for stateless agents (whose ``create_state`` returns ``None``).
         """
-        states = {}
-        for key, has in self._has_state.items():
-            if has:
-                idx = self._key_to_idx[key]
-                states[key] = self._loaded_agents[idx].reset_state()
-            else:
-                states[key] = None
-        return states
+        return {
+            key: self._loaded_agents[self._key_to_idx[key]].create_state()
+            for key in self._key_to_idx
+        }
 
     def _build(self, agent_keys, obs_spaces, act_spaces):
         key_to_idx = {k: i for i, k in enumerate(agent_keys)}
@@ -196,10 +191,6 @@ class _AgentRuntime:
 
         self.actors = actors
         self.failed_keys = failed_keys
-        self._has_state = {
-            k: self._loaded_agents[key_to_idx[k]].reset_state is not None
-            for k in agent_keys
-        }
         return None
 
 
@@ -380,11 +371,9 @@ def _handle_session(msg_queue, send_fn, loaded_agents, args, runtime):
             # Call actor
             try:
                 t_start = time.perf_counter()
-                if states.get(key) is not None:
-                    actor_args = (states[key], wrapped_obs[key])
-                else:
-                    actor_args = (wrapped_obs[key],)
-                action = _call_with_timeout(actors[key], actor_args, action_timeout)
+                action = _call_with_timeout(
+                    actors[key], (states[key], wrapped_obs[key]), action_timeout
+                )
                 action_times[key] = time.perf_counter() - t_start
             except Exception as exc:
                 error_msg = f"Actor error: {exc}"

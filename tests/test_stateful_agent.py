@@ -1,7 +1,7 @@
-"""Tests for stateful agent support (reset_state / state passing).
+"""Tests for unified stateful agent interface (create_state / state passing).
 
 Covers:
-- Agent loading (reset_state captured from module)
+- Agent loading (create_state captured from module)
 - Local race state initialization and passing
 - Server-side _AgentRuntime state management
 - Full client-server protocol with stateful agents
@@ -67,13 +67,14 @@ def _make_loaded_agent(
 ):
     """Build a LoadedAgent for testing.
 
-    If *stateful*, the agent has a reset_state that returns a dict.
-    *state_factory* overrides the default reset_state callable.
+    All actors use the unified ``(state, obs)`` signature.
+    If *stateful*, ``create_state`` returns a dict; otherwise it returns ``None``.
+    *state_factory* overrides the default create_state callable.
     *actor_fn* overrides the default get_actor callable.
     """
 
     def default_stateless_actor(module_dir, obs_space, act_space):
-        def actor(obs):
+        def actor(state, obs):
             return {"acceleration": np.array([0.5], dtype=np.float32)}
 
         return actor
@@ -86,10 +87,10 @@ def _make_loaded_agent(
         return actor
 
     if stateful:
-        reset_state = state_factory or (lambda: {"counter": 0})
+        create_state = state_factory or (lambda: {"counter": 0})
         get_actor = actor_fn or default_stateful_actor
     else:
-        reset_state = None
+        create_state = state_factory or (lambda: None)
         get_actor = actor_fn or default_stateless_actor
 
     return LoadedAgent(
@@ -99,7 +100,7 @@ def _make_loaded_agent(
         module_dir=Path("."),
         get_wrappers=None,
         source=name,
-        reset_state=reset_state,
+        create_state=create_state,
     )
 
 
@@ -116,28 +117,28 @@ def _make_fake_env(n_agents):
 
 
 class TestLoadAgent:
-    """Test that load_agent() captures reset_state from agent modules."""
+    """Test that load_agent() captures create_state from agent modules."""
 
-    def test_stateless_agent_no_reset_state(self, tmp_path):
-        """Agent without reset_state gets None."""
+    def test_stateless_agent_default_create_state(self, tmp_path):
+        """Agent without create_state gets default lambda returning None."""
         agent_dir = tmp_path / "agent_stateless"
         agent_dir.mkdir()
         (agent_dir / "pystk_actor.py").write_text(
             textwrap.dedent("""\
                 def get_actor(state, obs_space, act_space):
-                    return lambda obs: {}
+                    return lambda state, obs: {}
             """)
         )
         la = load_agent(str(agent_dir), [])
-        assert la.reset_state is None
+        assert la.create_state() is None
 
-    def test_stateful_agent_has_reset_state(self, tmp_path):
-        """Agent with reset_state gets captured."""
+    def test_stateful_agent_has_create_state(self, tmp_path):
+        """Agent with create_state gets captured."""
         agent_dir = tmp_path / "agent_stateful"
         agent_dir.mkdir()
         (agent_dir / "pystk_actor.py").write_text(
             textwrap.dedent("""\
-                def reset_state():
+                def create_state():
                     return {"step_count": 0}
 
                 def get_actor(state, obs_space, act_space):
@@ -148,17 +149,16 @@ class TestLoadAgent:
             """)
         )
         la = load_agent(str(agent_dir), [])
-        assert la.reset_state is not None
-        state = la.reset_state()
+        state = la.create_state()
         assert state == {"step_count": 0}
 
-    def test_reset_state_returns_fresh_state(self, tmp_path):
-        """Each call to reset_state returns an independent object."""
+    def test_create_state_returns_fresh_state(self, tmp_path):
+        """Each call to create_state returns an independent object."""
         agent_dir = tmp_path / "agent_fresh"
         agent_dir.mkdir()
         (agent_dir / "pystk_actor.py").write_text(
             textwrap.dedent("""\
-                def reset_state():
+                def create_state():
                     return {"n": 0}
 
                 def get_actor(state, obs_space, act_space):
@@ -166,10 +166,10 @@ class TestLoadAgent:
             """)
         )
         la = load_agent(str(agent_dir), [])
-        s1 = la.reset_state()
+        s1 = la.create_state()
         s1["n"] = 42
-        s2 = la.reset_state()
-        assert s2["n"] == 0, "reset_state must return a fresh object each time"
+        s2 = la.create_state()
+        assert s2["n"] == 0, "create_state must return a fresh object each time"
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ class TestLoadAgent:
 
 
 class TestLoadedAgentDataclass:
-    def test_default_reset_state_is_none(self):
+    def test_default_create_state_returns_none(self):
         la = LoadedAgent(
             env_name="e",
             player_name="p",
@@ -187,9 +187,9 @@ class TestLoadedAgentDataclass:
             get_wrappers=None,
             source="s",
         )
-        assert la.reset_state is None
+        assert la.create_state() is None
 
-    def test_reset_state_field(self):
+    def test_create_state_field(self):
         fn = lambda: {"x": 1}  # noqa: E731
         la = LoadedAgent(
             env_name="e",
@@ -198,10 +198,10 @@ class TestLoadedAgentDataclass:
             module_dir=Path("."),
             get_wrappers=None,
             source="s",
-            reset_state=fn,
+            create_state=fn,
         )
-        assert la.reset_state is fn
-        assert la.reset_state() == {"x": 1}
+        assert la.create_state is fn
+        assert la.create_state() == {"x": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -219,64 +219,60 @@ class TestLocalRaceState:
             _make_loaded_agent("stateful", stateful=True),
             _make_loaded_agent("stateless2", stateful=False),
         ]
-        states = [
-            la.reset_state() if la.reset_state is not None else None for la in agents
-        ]
+        states = [la.create_state() for la in agents]
         assert states[0] is None
         assert states[1] == {"counter": 0}
         assert states[2] is None
 
-    def test_stateful_actor_receives_state(self):
-        """When state is not None, actor is called with (state, obs)."""
+    def test_actor_always_receives_state_and_obs(self):
+        """Actor is always called with (state, obs), even when state is None."""
         call_log = []
 
         def my_get_actor(module_dir, obs_space, act_space):
             def actor(state, obs):
-                call_log.append(("stateful", state, obs))
+                call_log.append(("called", state, obs))
                 return {"acceleration": np.array([1.0], dtype=np.float32)}
 
             return actor
 
         la = _make_loaded_agent("s", stateful=True, actor_fn=my_get_actor)
         actor = la.get_actor(la.module_dir, _simple_obs_space(), _simple_act_space())
-        state = la.reset_state()
+        state = la.create_state()
         obs = {"x": np.array([0.1, 0.2], dtype=np.float32)}
 
-        # Simulate what _run_race_inner does
-        args_tuple = (state, obs) if state is not None else (obs,)
-        _call_with_timeout(actor, args_tuple, None)
+        # Simulate what _run_race_inner does: always pass (state, obs)
+        _call_with_timeout(actor, (state, obs), None)
 
         assert len(call_log) == 1
-        assert call_log[0][0] == "stateful"
         assert call_log[0][1] is state
 
-    def test_stateless_actor_receives_obs_only(self):
-        """When state is None, actor is called with (obs,) only."""
+    def test_stateless_actor_receives_none_state(self):
+        """Stateless actor is called with (None, obs)."""
         call_log = []
 
         def my_get_actor(module_dir, obs_space, act_space):
-            def actor(obs):
-                call_log.append(("stateless", obs))
+            def actor(state, obs):
+                call_log.append(("stateless", state, obs))
                 return {"acceleration": np.array([1.0], dtype=np.float32)}
 
             return actor
 
         la = _make_loaded_agent("s", stateful=False, actor_fn=my_get_actor)
         actor = la.get_actor(la.module_dir, _simple_obs_space(), _simple_act_space())
-        state = None
+        state = la.create_state()
         obs = {"x": np.array([0.1, 0.2], dtype=np.float32)}
 
-        args_tuple = (state, obs) if state is not None else (obs,)
-        _call_with_timeout(actor, args_tuple, None)
+        _call_with_timeout(actor, (state, obs), None)
 
         assert len(call_log) == 1
         assert call_log[0][0] == "stateless"
+        assert call_log[0][1] is None
 
     def test_state_mutated_across_steps(self):
         """Stateful actor can mutate state across multiple steps."""
         la = _make_loaded_agent("counter", stateful=True)
         actor = la.get_actor(la.module_dir, _simple_obs_space(), _simple_act_space())
-        state = la.reset_state()
+        state = la.create_state()
         obs = {"x": np.array([0.0, 0.0], dtype=np.float32)}
 
         for _ in range(5):
@@ -284,11 +280,11 @@ class TestLocalRaceState:
 
         assert state["counter"] == 5
 
-    def test_reset_state_resets_counter(self):
-        """Calling reset_state after mutations returns a fresh state."""
+    def test_create_state_resets_counter(self):
+        """Calling create_state after mutations returns a fresh state."""
         la = _make_loaded_agent("counter", stateful=True)
         actor = la.get_actor(la.module_dir, _simple_obs_space(), _simple_act_space())
-        state = la.reset_state()
+        state = la.create_state()
         obs = {"x": np.array([0.0, 0.0], dtype=np.float32)}
 
         for _ in range(3):
@@ -296,7 +292,7 @@ class TestLocalRaceState:
         assert state["counter"] == 3
 
         # Simulate a race reset
-        state2 = la.reset_state()
+        state2 = la.create_state()
         assert state2["counter"] == 0
         assert state["counter"] == 3  # original unchanged
 
@@ -307,7 +303,7 @@ class TestLocalRaceState:
 
 
 class TestAgentRuntime:
-    """Test _AgentRuntime initialization, _has_state, and reset_states()."""
+    """Test _AgentRuntime initialization and reset_states()."""
 
     def _build_runtime(self, agents):
         """Helper: build and initialize a runtime."""
@@ -319,31 +315,27 @@ class TestAgentRuntime:
         assert err is None, f"Runtime init failed: {err}"
         return runtime, keys
 
-    def test_has_state_all_stateless(self):
+    def test_reset_states_all_stateless(self):
         agents = [
             _make_loaded_agent("a", stateful=False),
             _make_loaded_agent("b", stateful=False),
         ]
         runtime, keys = self._build_runtime(agents)
-        assert runtime._has_state == {"0": False, "1": False}
+        states = runtime.reset_states()
+        assert states["0"] is None
+        assert states["1"] is None
 
-    def test_has_state_all_stateful(self):
+    def test_reset_states_all_stateful(self):
         agents = [
             _make_loaded_agent("a", stateful=True),
             _make_loaded_agent("b", stateful=True),
         ]
         runtime, keys = self._build_runtime(agents)
-        assert runtime._has_state == {"0": True, "1": True}
+        states = runtime.reset_states()
+        assert states["0"] == {"counter": 0}
+        assert states["1"] == {"counter": 0}
 
-    def test_has_state_mixed(self):
-        agents = [
-            _make_loaded_agent("stateless", stateful=False),
-            _make_loaded_agent("stateful", stateful=True),
-        ]
-        runtime, keys = self._build_runtime(agents)
-        assert runtime._has_state == {"0": False, "1": True}
-
-    def test_reset_states_returns_correct_types(self):
+    def test_reset_states_mixed(self):
         agents = [
             _make_loaded_agent("stateless", stateful=False),
             _make_loaded_agent("stateful", stateful=True),
@@ -711,7 +703,7 @@ class TestZMQIntegration:
         call_log = []
 
         def tracking_get_actor(module_dir, obs_space, act_space):
-            def actor(obs):
+            def actor(state, obs):
                 call_log.append("called")
                 return {"acceleration": np.array([0.5], dtype=np.float32)}
 
@@ -772,8 +764,8 @@ class TestZMQIntegration:
         stateful_log = []
 
         def stateless_get_actor(module_dir, obs_space, act_space):
-            def actor(obs):
-                stateless_log.append("obs_only")
+            def actor(state, obs):
+                stateless_log.append("called")
                 return {"acceleration": np.array([0.5], dtype=np.float32)}
 
             return actor
@@ -830,8 +822,8 @@ class TestZMQIntegration:
             resp = recv_msg(client)
             assert resp["type"] == MSG_CLOSE_RESPONSE
 
-            # Stateless agent: called 3 times with obs only
-            assert stateless_log == ["obs_only"] * 3
+            # Stateless agent: called 3 times with (None, obs)
+            assert stateless_log == ["called"] * 3
             # Stateful agent: state counter increments 0, 1, 2
             assert stateful_log == [0, 1, 2]
 
@@ -846,26 +838,22 @@ class TestZMQIntegration:
 
 
 class TestEdgeCases:
-    def test_reset_state_returning_none(self):
-        """Agent with reset_state that returns None is treated as stateless."""
+    def test_create_state_returning_none(self):
+        """Agent with create_state that returns None — state is None."""
         la = _make_loaded_agent(
             "none_state",
             stateful=True,
             state_factory=lambda: None,
         )
-        # reset_state exists but returns None
-        assert la.reset_state is not None
-        state = la.reset_state()
+        state = la.create_state()
         assert state is None
 
-        # The race loop checks `state is not None`, so this agent is
-        # effectively stateless — actor should be called with (obs,) only
-        states = [la.reset_state() if la.reset_state is not None else None]
+        # In the unified interface, create_state() is always called
+        states = [la.create_state()]
         assert states[0] is None
 
-    def test_runtime_reset_states_with_none_returning_reset(self):
-        """_AgentRuntime.reset_states handles reset_state returning None."""
-        # Agent has reset_state defined but it returns None
+    def test_runtime_reset_states_with_none_returning_create_state(self):
+        """_AgentRuntime.reset_states handles create_state returning None."""
         la = _make_loaded_agent(
             "none_reset",
             stateful=True,
@@ -878,9 +866,6 @@ class TestEdgeCases:
         err = runtime.ensure_initialized(keys, obs_spaces, act_spaces)
         assert err is None
 
-        # _has_state is True because reset_state is not None
-        assert runtime._has_state["0"] is True
-        # But reset_states returns None for this key
         states = runtime.reset_states()
         assert states["0"] is None
 
@@ -900,8 +885,8 @@ class TestEdgeCases:
         states["0"]["counter"] = 100
         assert states["1"]["counter"] == 0, "Agent states must be independent"
 
-    def test_load_error_agent_skipped_in_has_state(self):
-        """Agent with load_error still gets _has_state=False."""
+    def test_load_error_agent_create_state_returns_none(self):
+        """Agent with load_error gets default create_state returning None."""
         la = LoadedAgent(
             env_name="supertuxkart/full-v0",
             player_name="broken",
@@ -910,7 +895,6 @@ class TestEdgeCases:
             get_wrappers=None,
             source="broken",
             load_error="Failed to load",
-            reset_state=None,
         )
         runtime = _AgentRuntime([la], adapter_module=None)
         keys = ["0"]
@@ -928,4 +912,6 @@ class TestEdgeCases:
 
             err = runtime.ensure_initialized(keys, obs_spaces, act_spaces)
         assert err is None
-        assert runtime._has_state["0"] is False
+
+        states = runtime.reset_states()
+        assert states["0"] is None

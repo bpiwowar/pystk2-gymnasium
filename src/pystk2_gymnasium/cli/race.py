@@ -37,7 +37,7 @@ class LoadedAgent:
     get_wrappers: Optional[Callable]  # () -> list of extra wrappers
     source: str  # original source path/name
     load_error: Optional[str] = None  # set when the agent failed to load
-    reset_state: Optional[Callable] = None  # () -> state object for stateful agents
+    create_state: Callable = lambda: None  # () -> state (or None for stateless agents)
 
 
 def _load_module_from_path(path: Path):
@@ -146,7 +146,7 @@ def load_agent(
     player_name = name_override or getattr(module, "player_name", source)
     get_wrappers = getattr(module, "get_wrappers", None)
     get_actor = module.get_actor
-    reset_state = getattr(module, "reset_state", None)
+    create_state = getattr(module, "create_state", lambda: None)
 
     return LoadedAgent(
         env_name=env_name,
@@ -155,7 +155,7 @@ def load_agent(
         module_dir=module_dir,
         get_wrappers=get_wrappers,
         source=source,
-        reset_state=reset_state,
+        create_state=create_state,
     )
 
 
@@ -414,8 +414,8 @@ class FrameRecorder:
         draw = ImageDraw.Draw(img)
 
         # Scale fonts relative to frame height
-        title_size = max(24, height // 8)
-        body_size = max(16, height // 14)
+        title_size = max(20, height // 10)
+        body_size = max(12, height // 20)
 
         font_title = self._load_font(title_size)
         font_body = self._load_font(body_size)
@@ -429,11 +429,15 @@ class FrameRecorder:
             anchor="mm",
         )
 
-        # Results: "#{start}. {name} (end #{end})"
-        left_x = width * 0.15
-        line_height = body_size + 10
-        y = title_size * 1.5 + line_height
-        for r in results:
+        # Results in two columns: "#{start}. {name} (end #{end})"
+        line_height = body_size + 6
+        top_y = title_size * 1.5 + line_height
+        col_x = [width * 0.05, width * 0.52]
+        n_rows = (len(results) + 1) // 2  # rows needed for two columns
+
+        for i, r in enumerate(results):
+            col = i // n_rows  # fill left column first, then right
+            row = i % n_rows
             start = r["start_pos"]
             end = r.get("end_pos")
             if end is not None:
@@ -442,13 +446,12 @@ class FrameRecorder:
                 line = f"#{start}. {r['name']}"
 
             draw.text(
-                (left_x, y),
+                (col_x[col], top_y + row * line_height),
                 line,
                 fill=(200, 200, 200),
                 font=font_body,
                 anchor="lm",
             )
-            y += line_height
 
         self._save_frame(np.array(img))
 
@@ -713,10 +716,8 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
     step_count = 0
     start_time = time.time()
 
-    # Initialize per-agent state for stateful agents
-    states = [
-        la.reset_state() if la.reset_state is not None else None for la in loaded_agents
-    ]
+    # Initialize per-agent state (None for stateless agents)
+    states = [la.create_state() for la in loaded_agents]
 
     if web_server is not None:
         web_server.update(env, obs, info, total_rewards, step_count)
@@ -739,11 +740,9 @@ def _run_race_inner(args, temp_dirs: list, player_names: list):  # noqa: C901
                 key = str(ix)
                 try:
                     t_start = time.perf_counter()
-                    if states[ix] is not None:
-                        args_tuple = (states[ix], obs[key])
-                    else:
-                        args_tuple = (obs[key],)
-                    action = _call_with_timeout(actor, args_tuple, action_timeout)
+                    action = _call_with_timeout(
+                        actor, (states[ix], obs[key]), action_timeout
+                    )
                     action_times[ix].append(time.perf_counter() - t_start)
                     actions[key] = action
                 except Exception as exc:
