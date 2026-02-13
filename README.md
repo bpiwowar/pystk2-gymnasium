@@ -12,6 +12,15 @@ easy
 
 `pip install pystk2-gymnasium`
 
+Optional extras:
+
+```bash
+pip install pystk2-gymnasium[cli]      # CLI race runner (tqdm, torch)
+pip install pystk2-gymnasium[record]   # Race video recording (moviepy, Pillow)
+pip install pystk2-gymnasium[remote]   # Client-server mode (pyzmq)
+pip install pystk2-gymnasium[web]      # Web visualization dashboard (dash, plotly)
+```
+
 Note that during the first run, SuperTuxKart assets are downloaded in the cache
 directory.
 
@@ -161,6 +170,59 @@ make_stkenv = partial(
 )
 ```
 
+## Agent interface
+
+Agents used with the CLI are Python modules (typically `pystk_actor.py`) that
+define the following:
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `create_state()` | no | Returns the initial state for the agent (default: `None` for stateless agents) |
+| `get_actor(module_dir, obs_space, act_space)` | yes | Returns an actor callable `actor(state, obs) -> action` |
+| `env_name` | no | Gymnasium environment ID (default: `"supertuxkart/full-v0"`) |
+| `player_name` | no | Name displayed above the kart |
+| `get_wrappers()` | no | Returns a list of additional wrapper callables |
+
+The `module_dir` argument is the path to the agent's directory, which can be
+used to load model weights or other resources. For stateful agents,
+`create_state()` is called once per race and the returned state object is passed
+to `actor(state, obs)` at every step.
+
+Example (stateless heuristic agent):
+
+```python
+import math
+import numpy as np
+
+env_name = "supertuxkart/simple-v0"
+player_name = "Heuristic"
+
+def create_state():
+    return None
+
+def get_actor(module_dir, observation_space, action_space):
+    def actor(state, obs):
+        paths_end = obs["paths_end"]
+        if len(paths_end) > 0:
+            angle_zx = float(paths_end[0][0])
+            steer = np.clip(angle_zx / math.pi * 2, -1.0, 1.0)
+        else:
+            steer = 0.0
+
+        return {
+            "acceleration": np.array([1.0], dtype=np.float32),
+            "steer": np.array([steer], dtype=np.float32),
+            "brake": 0, "drift": 0,
+            "fire": 1 if int(obs.get("attachment", 0)) != 0 else 0,
+            "nitro": 1, "rescue": 0,
+        }
+
+    return actor
+```
+
+Agents can be packaged as a zip file, a directory containing `pystk_actor.py`,
+or a Python module on the import path.
+
 ## CLI Commands
 
 The `pystk2` command-line tool provides commands for running races locally or in a distributed client-server setup.
@@ -189,9 +251,11 @@ pystk2 race agent1.zip agent2.zip --num-karts 5 --track lighthouse --laps 2
 | `--hide` | off | Run without graphics (headless) |
 | `--web` | off | Enable web visualization dashboard (requires `dash`/`plotly`) |
 | `--web-port` | 8050 | Port for the web dashboard |
-| `--record FILE` | — | Save race video (e.g. `race.mp4`) |
+| `--record FILE` | — | Save race video (e.g. `race.mp4`, `race.webm`) |
 | `--cameras` | auto | Number of cameras (max 8) |
-| `--fps` | 20 | Video frame rate |
+| `--screen-width` | 1280 | Camera width in pixels when recording |
+| `--screen-height` | 720 | Camera height in pixels when recording |
+| `--render-sub-steps` | 1 | Physics sub-steps per action when recording (higher = smoother video) |
 | `--adapter PATH` | — | Python file providing a custom `create_actor` function |
 | `--max-steps` | unlimited | Maximum steps before stopping |
 
@@ -252,8 +316,12 @@ Requires `pyzmq`: `pip install pystk2-gymnasium[remote]`
 | `--web-port` | 8050 | Port for the web dashboard |
 | `--record FILE` | — | Save race video |
 | `--cameras` | auto | Number of cameras (max 8) |
-| `--fps` | 20 | Video frame rate |
+| `--screen-width` | 1280 | Camera width in pixels when recording |
+| `--screen-height` | 720 | Camera height in pixels when recording |
+| `--render-sub-steps` | 1 | Physics sub-steps per action when recording (higher = smoother video) |
 | `--max-steps` | unlimited | Maximum steps before stopping |
+| `--max-steps-after-first` | unlimited | Maximum steps to continue after the first kart finishes |
+| `--karts-finished` | all | Stop the race after this many karts have finished |
 | `--timeout` | 60 | ZMQ recv timeout per request in seconds |
 
 ### Client-server architecture
@@ -274,6 +342,33 @@ Key design points:
 - **Concurrent sessions**: The server uses a thread pool (`--threads`) to handle multiple client races simultaneously.
 - **One server = one or more agents**: A single server can load multiple agents.
 - **Protocol**: ZMQ ROUTER/REQ over TCP with pickle serialization.
+
+### Recording
+
+When `--record` is used, the race is captured to a video file. Supported
+formats: `.mp4`, `.mkv`, `.avi`, `.webm`, `.ogv`, `.mov`. Frame durations are
+derived from in-game timestamps for accurate timing. Each controlled agent gets
+a distinct kart model and color, and an end card showing final results is
+appended to the video.
+
+Use `--render-sub-steps` to capture intermediate physics frames for smoother
+video without changing the action rate. Requires: `pip install
+pystk2-gymnasium[record]`.
+
+### Adapter
+
+The `--adapter PATH` option loads a Python file that customizes how actors are
+created. The adapter must define:
+
+- `create_actor(get_actor, module_dir, obs_space, act_space)` — wraps the
+  agent's `get_actor` to add custom logic (e.g. loading model weights).
+
+It may optionally define:
+
+- `prepare_module_dir(path)` — called on each agent's directory before
+  importing (e.g. to create a missing `__init__.py`).
+
+See `examples/bbrl_adapter.py` for a reference implementation.
 
 ## Action and observation space
 
