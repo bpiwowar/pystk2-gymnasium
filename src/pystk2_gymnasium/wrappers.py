@@ -33,6 +33,8 @@ class SpaceFlattener:
         self.continuous_keys = []
         self.shapes = []
         self.discrete_keys: List[str] = []
+        self.passthrough_keys: List[str] = []
+        self.passthrough_spaces: dict = {}
         self.indices = [0]
 
         continuous_size = 0
@@ -61,7 +63,9 @@ class SpaceFlattener:
                 continuous_size += np.prod(value.shape)
                 self.indices.append(continuous_size)
             else:
-                assert False, f"Type not handled {type(value)}"
+                # Non-numeric spaces (e.g. Text) are passed through as-is
+                self.passthrough_keys.append(key)
+                self.passthrough_spaces[key] = value
 
         self.only_discrete = len(lows) == 0
         self.only_continuous = len(counts) == 0
@@ -74,7 +78,14 @@ class SpaceFlattener:
                 dtype=np.float32,
             )
 
-        if self.only_discrete:
+        if self.passthrough_spaces:
+            d = {**self.passthrough_spaces}
+            if not self.only_continuous:
+                d["discrete"] = discrete_space
+            if not self.only_discrete:
+                d["continuous"] = continuous_space
+            self.space = spaces.Dict(d)
+        elif self.only_discrete:
             self.space = discrete_space
         elif self.only_continuous:
             self.space = continuous_space
@@ -128,6 +139,8 @@ class FlattenerWrapper(ActionObservationWrapper):
                     ]
                 ),
             }
+            for key in self.observation_flattener.passthrough_keys:
+                new_obs[key] = observation[key]
         elif self.has_action:
             new_obs = {key: value for key, value in observation.items()}
         else:

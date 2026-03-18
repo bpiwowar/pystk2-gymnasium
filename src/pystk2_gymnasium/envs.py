@@ -167,6 +167,7 @@ class Phase(Enum):
 def kart_observation_space(use_ai: bool):
     space = spaces.Dict(
         {
+            "kart_type": spaces.Text(min_length=1, max_length=32),
             "aux_ticks": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
             "phase": spaces.Discrete(max_enum_value(Phase)),
             "powerup_type": spaces.Discrete(max_enum_value(pystk2.Powerup)),
@@ -513,6 +514,7 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             "phase": Phase.from_stk(self.world.phase).value,
             "aux_ticks": np.array([self.world.aux_ticks], dtype=np.float32),
             # Kart properties
+            "kart_type": kart.kart_type,
             "powerup_type": kart.powerup.type.value,
             "powerup_count": kart.powerup.num,
             "attachment": kart.attachment.type.value,
