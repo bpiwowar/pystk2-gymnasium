@@ -169,7 +169,8 @@ def kart_observation_space(use_ai: bool):
         {
             "aux_ticks": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
             "phase": spaces.Discrete(max_enum_value(Phase)),
-            "powerup": spaces.Discrete(max_enum_value(pystk2.Powerup)),
+            "powerup_type": spaces.Discrete(max_enum_value(pystk2.Powerup)),
+            "powerup_count": spaces.Discrete(6),
             # Last attachment... is no attachment
             "attachment": spaces.Discrete(max_enum_value(pystk2.Attachment)),
             "skeed_factor": spaces.Box(0.0, float("inf"), dtype=np.float32, shape=(1,)),
@@ -512,7 +513,8 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             "phase": Phase.from_stk(self.world.phase).value,
             "aux_ticks": np.array([self.world.aux_ticks], dtype=np.float32),
             # Kart properties
-            "powerup": kart.powerup.num,
+            "powerup_type": kart.powerup.type.value,
+            "powerup_count": kart.powerup.num,
             "attachment": kart.attachment.type.value,
             "attachment_time_left": np.array(
                 [kart.attachment.time_left], dtype=np.float32
