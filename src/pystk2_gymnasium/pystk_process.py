@@ -1,4 +1,4 @@
-from functools import partial, partialmethod
+from functools import partial
 import logging
 from multiprocessing import Pipe, Process
 from multiprocessing.connection import Connection
@@ -131,15 +131,15 @@ class PySTKRemoteProcess:
                 pipe.send(None)
                 sys.exit()
 
+            method_name, args, kwargs = command
             logging.debug(
                 "Received command %s, args=%s, kwargs=%s",
-                command.func,
-                command.args,
-                command.keywords,
+                method_name,
+                args,
+                kwargs,
             )
-            assert isinstance(command, partialmethod)
 
-            result = command.func(stk, *command.args, **command.keywords)
+            result = getattr(stk, method_name)(*args, **kwargs)
             logging.debug("Sending result %s", result)
             pipe.send(result)
 
@@ -205,13 +205,13 @@ class PySTKProcess:
         )
         self.process.start()
 
-    def _run(self, method, *args, **kwargs):
-        if method:
-            method = partialmethod(method, *args, **kwargs)
+    def _run(self, method_name, *args, **kwargs):
+        if method_name:
+            self.pipe.send((method_name, args, kwargs))
         else:
             assert len(args) == 0 and len(kwargs) == 0
+            self.pipe.send(None)
 
-        self.pipe.send(method)
         result = self.pipe.recv()
         logging.debug("Got %s", result)
         if isinstance(result, Exception):
@@ -235,4 +235,4 @@ class PySTKProcess:
                 self.process = None
 
     def __getattr__(self, name):
-        return partial(self._run, getattr(PySTKRemoteProcess, name))
+        return partial(self._run, name)
