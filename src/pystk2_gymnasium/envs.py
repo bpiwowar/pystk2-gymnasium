@@ -609,7 +609,7 @@ class STKRaceEnv(BaseSTKRaceEnv):
         # Set the controlled kart position (if any)
         self.kart_ix = self.agent.rank_start
         if self.kart_ix is None:
-            self.kart_ix = np.random.randint(0, self.num_kart)
+            self.kart_ix = random.randint(0, self.num_kart)
         logging.debug("Observed kart index %d", self.kart_ix)
 
         # Camera setup
@@ -702,7 +702,7 @@ class STKRaceMultiEnv(BaseSTKRaceEnv):
         super().reset_race(random, options=options)
 
         # Choose positions for agent karts
-        np.random.shuffle(self.free_positions)
+        random.shuffle(self.free_positions)
         pos_iter = iter(self.free_positions)
         self.kart_indices = []
         for agent in self.agents:
