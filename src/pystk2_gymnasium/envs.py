@@ -234,15 +234,20 @@ class STKAction(TypedDict):
     rescue: bool
 
 
+def _scalar(v):
+    """Convert a value that may be a numpy array to a Python scalar."""
+    return v.item() if hasattr(v, "item") else v
+
+
 def get_action(action: STKAction):
     return pystk2.Action(
-        brake=int(action["brake"]) > 0,
-        nitro=int(action["nitro"] > 0),
-        drift=int(action["drift"] > 0),
-        rescue=int(action["rescue"] > 0),
-        fire=int(action["fire"] > 0),
-        steer=float(action["steer"]),
-        acceleration=float(action["acceleration"]),
+        brake=int(_scalar(action["brake"])) > 0,
+        nitro=int(_scalar(action["nitro"])) > 0,
+        drift=int(_scalar(action["drift"])) > 0,
+        rescue=int(_scalar(action["rescue"])) > 0,
+        fire=int(_scalar(action["fire"])) > 0,
+        steer=float(_scalar(action["steer"])),
+        acceleration=float(_scalar(action["acceleration"])),
     )
 
 
