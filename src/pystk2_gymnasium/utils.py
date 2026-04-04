@@ -103,7 +103,9 @@ class Discretizer:
         self.values = values
         self.space = spaces.Discrete(values)
 
-    def discretize(self, value: float):
+    def discretize(self, value):
+        if hasattr(value, "item"):
+            value = value.item()
         v = int(
             (value - self.min_value)
             * (self.values - 1)
