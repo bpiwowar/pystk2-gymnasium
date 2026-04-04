@@ -98,8 +98,8 @@ def max_enum_value(EnumType: Type):
 
 class Discretizer:
     def __init__(self, space: spaces.Box, values: int):
-        self.max_value = float(space.high)
-        self.min_value = float(space.low)
+        self.max_value = float(space.high.flat[0])
+        self.min_value = float(space.low.flat[0])
         self.values = values
         self.space = spaces.Discrete(values)
 
