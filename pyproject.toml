@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "PySuperTuxKart2>=0.7.1",
+    "PySuperTuxKart2>=0.7.3",
     "gymnasium>0.29.0",
     "numba",
 ]
