@@ -363,12 +363,36 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
             ].controller = pystk2.PlayerConfig.Controller.AI_CONTROL
 
     def world_update(self, keep=True):
-        """Update world state, but keep some information to compute reward"""
-        if keep:
-            self.last_overall_distances = [
-                max(kart.overall_distance, 0) for kart in self.world.karts
-            ]
+        """Update world state, but keep some information to compute reward
+
+        The progress of each kart is accumulated from the variations of
+        ``distance_down_track`` (wrapped around the track length) rather than
+        read from STK's ``overall_distance``. The latter is
+        ``finished_laps * track_length + distance_down_track`` and is not
+        reliable: the lap counter is only incremented when the kart is on road
+        (so crossing the line off-road and getting back on road later counts a
+        full lap in one step), and it is never decremented when the kart goes
+        back across the line (so reversing behind the line jumps by one lap).
+        """
         self.world = self._stk.get_world()
+        track_length = self.track.length
+        down_track = [kart.distance_down_track for kart in self.world.karts]
+
+        if not keep:
+            self.last_progress = [0.0] * len(down_track)
+            self.progress = [0.0] * len(down_track)
+        else:
+            self.last_progress = list(self.progress)
+            for ix, (d, last_d) in enumerate(zip(down_track, self.last_down_track)):
+                delta = d - last_d
+                # Crossing the start line (forward or backward)
+                if delta < -track_length / 2:
+                    delta += track_length
+                elif delta > track_length / 2:
+                    delta -= track_length
+                self.progress[ix] += delta
+
+        self.last_down_track = down_track
         return self.world
 
     def get_state(self, kart_ix: int, use_ai: bool):
@@ -379,10 +403,10 @@ class BaseSTKRaceEnv(gym.Env[Any, STKAction]):
         # Get the observation and update the world state
         obs = self.get_observation(kart_ix, use_ai)
 
-        d_t = max(0, kart.overall_distance)
+        d_t = self.progress[kart_ix]
         f_t = 1 if terminated else 0
         reward = (
-            (d_t - self.last_overall_distances[kart_ix]) / 10.0
+            (d_t - self.last_progress[kart_ix]) / 10.0
             + (1.0 - kart.position / self.num_kart) * (3 + 7 * f_t)
             - 0.1
             + 10 * f_t
